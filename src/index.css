@@ -1,0 +1,196 @@
+/* src/index.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+
+
+/* Ensure solid black background for the entire app */
+html,
+body,
+#root {
+  background: #000000; /* Pure black */
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+
+
+
+/* Solid black background for the app container */
+.solid-black {
+  position: relative;
+  background: #000000; /* Pure black */
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+
+
+
+/* Shooting star container */
+.shooting-stars {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0; /* Behind all content */
+  pointer-events: none; /* Prevent interaction */
+}
+
+
+
+
+/* Shooting star */
+.shooting-star {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: white;
+  box-shadow: 0 0 5px 2px rgba(255, 255, 255, 0.8); /* Glowing effect */
+  opacity: 0;
+  transform: rotate(45deg); /* Diagonal trajectory */
+  animation: shoot linear infinite;
+}
+
+
+
+
+/* Tail effect for stars with .has-tail class */
+.shooting-star.has-tail::after {
+  content: "";
+  position: absolute;
+  width: 50px; /* Tail length */
+  height: 2px; /* Thin tail */
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.8),
+    transparent
+  ); /* Fading white tail */
+  left: -50px; /* Position behind star */
+  top: 50%; /* Center vertically */
+  transform: translateY(-50%); /* Align with star */
+}
+
+
+
+
+/* Shooting star positions and timing */
+.shooting-star:nth-child(1) {
+  top: 10%;
+  left: 20%;
+  animation-duration: 2s;
+  animation-delay: 0s;
+}
+
+
+
+
+.shooting-star:nth-child(2) {
+  top: 30%;
+  left: 60%;
+  animation-duration: 2.5s;
+  animation-delay: 3s;
+}
+
+
+
+
+.shooting-star:nth-child(3) {
+  top: 50%;
+  left: 40%;
+  animation-duration: 1.8s;
+  animation-delay: 6s;
+}
+
+
+
+
+.shooting-star:nth-child(4) {
+  top: 70%;
+  left: 80%;
+  animation-duration: 2.2s;
+  animation-delay: 9s;
+}
+
+
+
+
+.shooting-star:nth-child(5) {
+  top: 15%;
+  left: 50%;
+  animation-duration: 2.3s;
+  animation-delay: 11s;
+}
+
+
+
+
+.shooting-star:nth-child(6) {
+  top: 40%;
+  left: 30%;
+  animation-duration: 1.9s;
+  animation-delay: 13s;
+}
+
+
+
+
+.shooting-star:nth-child(7) {
+  top: 60%;
+  left: 70%;
+  animation-duration: 2.7s;
+  animation-delay: 2s;
+}
+
+
+
+
+.shooting-star:nth-child(8) {
+  top: 25%;
+  left: 10%;
+  animation-duration: 2.1s;
+  animation-delay: 5s;
+}
+
+
+
+
+/* Shooting star animation */
+@keyframes shoot {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) rotate(45deg);
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(300px, 300px) rotate(45deg); /* Move diagonally */
+  }
+}
+
+
+
+
+/* Ensure form card is solid */
+.form-card {
+  background: rgba(23, 23, 23, 0.6); /* Matches bg-neutral-900/60 */
+  backdrop-filter: blur(4px); /* Subtle frosted glass effect */
+  border: 1px solid #27272a; /* Matches border-neutral-800 */
+  z-index: 1; /* Above shooting stars */
+}
+
+
+
+
+/* Ensure inputs are solid */
+.solid-input {
+  background: #171717; /* Matches bg-neutral-950 */
+  border: 1px solid #27272a; /* Matches border-neutral-800 */
+  z-index: 1; /* Above shooting stars */
+}

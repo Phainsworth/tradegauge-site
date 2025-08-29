@@ -1,0 +1,4544 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+/**
+ * TradeGauge App — client-only prototype
+ * - Vite env: VITE_OPENAI_KEY, VITE_FINNHUB_KEY, VITE_POLYGON_KEY, (optional) VITE_MACRO_JSON
+ *
+ * This build:
+ * - FIX: Avoids black screen by lazy-loading OpenAI SDK (no top-level import).
+ * - Ticker search fix (exact+fuzzy, race-proof, controlled input).
+ * - "Why this score" shows *drivers* (not definitions); score supports decimals.
+ * - Powell event shown without "(Manual override)".
+ */
+/* =========================
+   Main App (wrapped below)
+   ========================= */
+   // --- Patch Notes (edit weekly) ---
+const PATCH_NOTES: { date: string; items: string[] }[] = [
+  {
+    date: "Aug 29, 2025",
+    items: [
+      "AI Advice Algorithm Tweaks",
+      "Fixed an issue related to the ticker search",
+      "Minor UI polish on cards",
+    ],
+  },
+  // Add new entries above this line (newest first)
+];
+function TradeGaugeApp() {
+const addDebug = React.useCallback((_msg?: string, _err?: any) => {}, []);
+  // -----------------------------
+  // FORM + LIVE DATA STATE
+  // -----------------------------
+const [newsCount, setNewsCount] = useState(3);
+const [keyOpen, setKeyOpen] = useState(false);
+const [form, setForm] = useState({
+  ticker: "",
+  type: "",     // "CALL" | "PUT"
+  strike: "",
+  expiry: "",   // YYYY-MM-DD
+  pricePaid: "",
+  spot: "",
+  open: "",     // <-- NEW: today's open for % change
+});
+  const [submitted, setSubmitted] = useState(false);
+  const [showDisclaimer, setShowDisclaimer] = useState(true);
+  {/* --- Beta Disclaimer (shows before first submit) --- */}
+{!submitted && showDisclaimer && (
+  <div className="mb-4 rounded-2xl border border-yellow-500/40 bg-yellow-900/10 p-4 text-sm text-yellow-200">
+    ...
+  </div>
+)}
+
+{/* --- Input fields start below --- */}
+<div className="...">
+   ...
+</div>
+  // --- 3-route advice for "What I'd do if I were you" ---
+type RouteChoice = {
+  label: string;           // e.g., "Aggressive Approach"
+  action: string;          // e.g., "Trim 25%", "Exit", "Hold with a tight stop"
+  rationale: string;       // one-liner reason
+  guardrail: string | null; // optional one-liner constraint
+};
+type RoutesOut = {
+  routes: {
+    aggressive: RouteChoice;
+    middle: RouteChoice;
+    conservative: RouteChoice;
+  };
+  pick: {
+    route: "aggressive" | "middle" | "conservative";
+    reason: string;
+    confidence: number;    // 0–100
+  };
+};
+
+const [routes, setRoutes] = useState<RoutesOut | null>(null);
+
+
+  // Keys from Vite env
+  const FINNHUB_KEY = (import.meta as any).env?.VITE_FINNHUB_KEY;
+  const POLY_KEY = (import.meta as any).env?.VITE_POLYGON_KEY;
+  const OPENAI_KEY = (import.meta as any).env?.VITE_OPENAI_KEY;
+  const MACRO_JSON_URL = (import.meta as any).env?.VITE_MACRO_JSON;
+
+
+  // Chain UI
+  const [expirations, setExpirations] = useState<string[]>([]);
+  const [strikes, setStrikes] = useState<number[]>([]);
+  const strikeTouchedRef = useRef(false);
+  const [loadingExp, setLoadingExp] = useState(false);
+  const [loadingStrikes, setLoadingStrikes] = useState(false);
+
+
+  // AI insights
+  type Insights = {
+    score: number; // 0..10 decimal
+    headline?: string;
+    narrative?: string;
+    advice: string[];
+    explainers: string[]; // drivers
+    risks?: string[];
+    watchlist?: string[];
+    strategy_notes?: string[];
+    confidence?: number;
+  };
+  const [insights, setInsights] = useState<Insights>({
+    score: 0,
+    advice: [],
+    explainers: [],
+  });
+  const [llmStatus, setLlmStatus] = useState<string>("");
+  const [isGenLoading, setIsGenLoading] = useState(false);
+
+
+  // Loading overlay (3 jokes, 2s each)
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const [overlayStep, setOverlayStep] = useState(0);
+  const [overlayPlaylist, setOverlayPlaylist] = useState<string[]>([]);
+  // Fast color+number cycle for loading screen
+const [spinnerHue, setSpinnerHue] = useState(0);
+const [spinnerScore, setSpinnerScore] = useState(0);
+// Show the true score in the background once we have it
+const [showRealBg, setShowRealBg] = useState(false);
+
+// Map 0→10 score to a risk hue (green→red). Tweak endpoints if you like.
+const hueForScore = (s: number) => {
+  const clamped = Math.max(0, Math.min(10, s));
+  return Math.round(120 - (clamped / 10) * 120); // 120=green, 0=red
+};
+
+useEffect(() => {
+  // flip on when overlay is open AND we actually have a real score
+  const real = Number((insights as any)?.score);
+  setShowRealBg(overlayOpen && Number.isFinite(real));
+}, [overlayOpen, insights]);
+useEffect(() => {
+  if (!overlayOpen) return;
+
+  let rafId: number;
+  const tick = () => {
+    const t = performance.now();
+
+    // Hue cycles 0..360 quickly
+    setSpinnerHue(Math.floor((t / 12) % 360));
+
+    // Smoothly cycle 0..10 (two sines for wobble)
+    const val =
+      5 +
+      5 * Math.sin(t / 180) +   // slow wave
+      0.7 * Math.sin(t / 43);   // fast wobble
+    const clamped = Math.max(0, Math.min(10, val));
+    setSpinnerScore(Math.round(clamped * 10) / 10);
+
+    rafId = requestAnimationFrame(tick);
+  };
+
+  rafId = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(rafId);
+}, [overlayOpen]);
+// Auto-hide the Key while loading; restore it when loading finishes
+const keyWasAutoHidden = useRef(false);
+useEffect(() => {
+  if (overlayOpen) {
+    if (keyOpen) keyWasAutoHidden.current = true; // remember if we hid it
+    setKeyOpen(false);
+  } else if (keyWasAutoHidden.current) {
+    setKeyOpen(true);                  // restore only if we auto-hid it
+    keyWasAutoHidden.current = false;
+  }
+}, [overlayOpen]); // uses keyOpen, setKeyOpen from earlier
+
+  const overlayMsgs = [
+    "Gathering required data…",
+    "Weighing pros & cons…",
+    "Reading Elon's mind…",
+    "Looking through Jerome Powell's window…",
+    "Putting the fries in the bag…",
+    "Mopping the floors…",
+    "Checking those Trump tweets…",
+  ];
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+
+  useEffect(() => {
+    if (!overlayOpen) return;
+    const pool = [...overlayMsgs];
+    const chosen: string[] = [];
+    for (let i = 0; i < 3 && pool.length; i++) {
+      const idx = Math.floor(Math.random() * pool.length);
+      chosen.push(pool.splice(idx, 1)[0]);
+    }
+    setOverlayPlaylist(chosen);
+    setOverlayStep(0);
+    const t1 = window.setTimeout(() => setOverlayStep(1), 2000);
+    const t2 = window.setTimeout(() => setOverlayStep(2), 4000);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [overlayOpen]);
+
+
+  // Spot (Finnhub)
+  const [spotLoading, setSpotLoading] = useState(false);
+  const spotCooldownUntil = useRef(0);
+// Live option quote (bid/ask/mark)
+const [quote, setQuote] = useState<{bid:string; ask:string; last:string; mark:string; src:string}>({
+  bid: "—", ask: "—", last: "—", mark: "—", src: ""
+});
+
+  // Polygon Greeks/IV snapshot
+  const [greeks, setGreeks] = useState({
+    delta: "—",
+    gamma: "—",
+    theta: "—",
+    vega: "—",
+    iv: "—",
+    openInterest: "—",
+  });
+  const [polyStatus, setPolyStatus] = useState<string>("—");
+  const [matchedContract, setMatchedContract] = useState<string>("");
+
+
+  // News & Macro & Earnings
+  type Headline = { title: string; source?: string; url?: string; ts?: number };
+  type EconEvent = { title: string; date: string; time?: string };
+  type Earnings = { date: string; when?: string; confirmed?: boolean };
+  const [headlines, setHeadlines] = useState<Headline[]>([]);
+  const [econEvents, setEconEvents] = useState<EconEvent[]>([]);
+  const [earnings, setEarnings] = useState<Earnings | null>(null);
+
+
+  // Cache chains per ticker
+  const chainCache = useRef<Map<string, any[]>>(new Map());
+
+console.log("[DISC] initial", { submitted, showDisclaimer });
+  // -----------------------------
+  // HELPERS
+  // -----------------------------
+// --- Normalize "Price Paid" (per-share) from messy user input ---
+// Accepts: "28.00", "2800", "$28", ".50", "50c", "50¢", "100", etc.
+// Rule of thumb:
+// - If there's a decimal already → keep it (two decimals).
+// - If user typed cents (ends with c/¢) → divide by 100.
+// - If no decimal and you have a live mark: if value > 3× mark → divide by 100.
+// - If no mark: any integer ≥ 100 → divide by 100.
+function normalizePaid(raw: any, refMark?: number | null): number | null {
+  const txt = (raw ?? "").toString().trim();
+  if (!txt) return null;
+
+  // ".50" style
+  if (/^\.\d+$/.test(txt)) {
+    const f = Number(txt);
+    return Number.isFinite(f) && f > 0 ? Math.round(f * 100) / 100 : null;
+  }
+
+  // strip $, commas, spaces; capture explicit cents
+  let s = txt.replace(/[$,\s]/g, "").toLowerCase();
+  let centsFlag = false;
+  if (/[c¢]$/.test(s)) {
+    s = s.replace(/[c¢]$/, "");
+    centsFlag = true;
+  }
+  if (!s || s === "." || s === "-") return null;
+
+  let n = Number(s);
+  if (!Number.isFinite(n) || n <= 0) return null;
+
+  const hasDot = s.includes(".");
+  if (hasDot) {
+    return Math.round(n * 100) / 100;
+  }
+
+  // No decimal: decide scaling
+  if (centsFlag) {
+    n = n / 100;
+  } else if (Number.isFinite(refMark as any) && (refMark as number) > 0) {
+    // If typed value is way bigger than plausible per-share price, treat as cents
+    if (n > (refMark as number) * 3) n = n / 100; // 3× is a good, less jumpy threshold
+  } else {
+    // No mark available: assume integers ≥100 are cents
+    if (n >= 100) n = n / 100;
+  }
+
+  return Math.round(n * 100) / 100;
+}
+function getPaidNormalized(raw: any, refMark?: number | null): number | null {
+  const n = normalizePaid(raw, refMark);
+  return Number.isFinite(n as any) ? (n as number) : null;
+}
+function parseRoutesJson(s: string): RoutesOut | null {
+  if (!s) return null;
+  try {
+    const j = JSON.parse(s);
+    if (
+      j && j.routes && j.pick &&
+      j.routes.aggressive && j.routes.middle && j.routes.conservative &&
+      typeof j.routes.aggressive.action === "string" &&
+      typeof j.routes.middle.action === "string" &&
+      typeof j.routes.conservative.action === "string" &&
+      (j.pick.route === "aggressive" || j.pick.route === "middle" || j.pick.route === "conservative")
+    ) {
+      return j as RoutesOut;
+    }
+  } catch {}
+  return null;
+}
+function normalizeRoutes(out: RoutesOut, ctx: { dte: number; bidNow: number | null }): RoutesOut {
+  const clone: RoutesOut = JSON.parse(JSON.stringify(out));
+  const { dte, bidNow } = ctx;
+
+  const fixTrim = (rc: RouteChoice) => {
+    if (!rc?.action) return;
+    if (/\btrim\b/i.test(rc.action)) {
+      // Ensure conditional phrasing for trim
+      const trimLine = rc.action.replace(/\.$/, "");
+      rc.action = `If you have more than one contract, ${trimLine}. If this is your only contract, either exit now or keep it as a tiny lotto.`;
+      // Nudge guardrail if missing
+      if (!rc.guardrail) rc.guardrail = "Keep any lotto tiny and be okay with a full loss.";
+    }
+  };
+
+  // Enforce semantics for each route
+  const A = clone.routes.aggressive;
+  const M = clone.routes.middle;
+  const C = clone.routes.conservative;
+
+  // 1) Aggressive should rarely be "Exit"
+  if (A?.action && /\b(exit|close)\b/i.test(A.action)) {
+    const imminent = dte <= 1;                     // ~<=1 day left
+    const deadBid = (bidNow ?? 0) <= 0;            // effectively no bid
+    if (!imminent && !deadBid) {
+      A.action = "Let it ride small";
+      A.rationale = A.rationale || "Risk-seeking route: give it a chance, but accept lotto odds.";
+      A.guardrail = A.guardrail || "Treat as lotto; keep size tiny.";
+    }
+  }
+
+  // 2) Always fix trim phrasing across routes
+  fixTrim(A);
+  fixTrim(M);
+  fixTrim(C);
+
+  return clone;
+}
+
+// ----- Expiry Scenario Builder (intrinsic at expiry only) -----
+// --- POP + utils ---
+function normalCdf(x: number) {
+  // Abramowitz & Stegun approximation
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989423 * Math.exp((-x * x) / 2);
+  let p =
+    d *
+    t *
+    (0.3193815 +
+      t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  if (x > 0) p = 1 - p;
+  return p;
+}
+function softResetForNewInput() {
+  setGreeks({ delta:"—", gamma:"—", theta:"—", vega:"—", iv:"—", openInterest:"—" });
+  setPolyStatus("—");
+  setMatchedContract("");
+  setInsights({ score: 0, advice: [], explainers: [] });
+  setLlmStatus("");
+  setHeadlines([]);
+  setEconEvents([]);
+  setEarnings(null);
+}
+// Probability of expiring ITM using IV + DTE (risk‑neutral, drift≈0)
+function probITM({
+  spot,
+  strike,
+  isCall,
+  ivPct,
+  dte,
+}: {
+  spot: number;
+  strike: number;
+  isCall: boolean;
+  ivPct: number | null; // e.g. 42 (%)
+  dte: number; // days
+}) {
+  if (!Number.isFinite(spot) || !Number.isFinite(strike)) return null;
+  if (!Number.isFinite(ivPct as any) || (ivPct as any) <= 0 || !Number.isFinite(dte) || dte <= 0)
+    return null;
+
+  const sigma = (ivPct as number) / 100;
+  const T = Math.max(1e-6, dte / 365);
+  const denom = sigma * Math.sqrt(T);
+  if (!Number.isFinite(denom) || denom <= 0) return null;
+
+  // Black–Scholes d2 with r≈0
+  const d2 = (Math.log(spot / strike) - 0.5 * sigma * sigma * T) / denom;
+  const callPOP = normalCdf(d2);
+  const putPOP = normalCdf(-d2);
+  const p = isCall ? callPOP : putPOP;
+  return Math.round(p * 100); // %
+}
+
+function chipTone(kind: "warning" | "danger" | "info" | "good") {
+  switch (kind) {
+    case "danger":
+      return "bg-rose-500/15 text-rose-300 border border-rose-500/30";
+    case "warning":
+      return "bg-amber-500/15 text-amber-300 border border-amber-500/30";
+    case "good":
+      return "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30";
+    default:
+      return "bg-neutral-700/20 text-neutral-300 border border-neutral-600/30";
+  }
+}
+
+function Chip({ children, tone }: { children: React.ReactNode; tone: string }) {
+  return <span className={`px-2 py-0.5 rounded text-[11px] ${tone}`}>{children}</span>;
+}
+
+// --- Save & Share ---
+function currentTradeStateToObject(form: any, greeks: any, insights: any, daysToExpiry: number) {
+  return {
+    ticker: form.ticker,
+    type: form.type,
+    strike: form.strike,
+    expiry: form.expiry,
+    pricePaid: form.pricePaid,
+    spot: form.spot,
+    greeks,
+    score: insights?.score ?? null,
+    dte: daysToExpiry,
+    ts: Date.now(),
+  };
+}
+function buildShareUrl(obj: any) {
+  const payload = btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+  const u = new URL(window.location.href);
+  u.searchParams.set("t", payload);
+  return u.toString();
+}
+function buildExpiryScenarios(params: {
+  spot: number;
+  strike: number;
+  isCall: boolean;
+  pricePaid?: number;   // contract price in $ (not cents)
+  stepPct?: number;     // e.g., 1 or 2 (default 2)
+  rangePct?: number;    // e.g., 20 for -20%..+20% (default 20)
+}) {
+  const {
+    spot, strike, isCall,
+    pricePaid = 0,
+    stepPct = 2,
+    rangePct = 20,
+  } = params;
+
+  const rows: {
+    pct: number;
+    S: number;
+    value: number;   // per contract ($)
+    pl?: number;
+    roi?: number;
+  }[] = [];
+
+  const intrinsicAt = (S: number) =>
+    Math.max(0, isCall ? S - strike : strike - S) * 100; // per contract
+
+  for (let p = -rangePct; p <= rangePct; p += stepPct) {
+    const S = +(spot * (1 + p / 100)).toFixed(2);
+    const value = +intrinsicAt(S).toFixed(2);
+    const hasPaid = Number.isFinite(pricePaid) && pricePaid > 0;
+    const paidCents = hasPaid ? pricePaid * 100 : NaN;
+    const pl = hasPaid ? +(value - paidCents).toFixed(2) : undefined;
+    const roi = hasPaid && paidCents > 0 ? +(((value - paidCents) / paidCents) * 100).toFixed(0) : undefined;
+    rows.push({ pct: p, S, value, pl, roi });
+  }
+  return rows;
+}
+
+  const num = (v: any) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : NaN;
+  };
+  const isDigits = (s: string) =>
+    s.split("").every((ch) => ch >= "0" && ch <= "9");
+  const displayMDY = (s: string) => {
+    if (s && s.length === 10 && s[4] === "-" && s[7] === "-") {
+      const y = s.slice(0, 4);
+      const m = s.slice(5, 7);
+      const d = s.slice(8, 10);
+      return `${Number(m)}/${Number(d)}/${y}`;
+    }
+    return s;
+  };
+  const toYMD_UTC = (d: Date) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
+  const normalizeExpiry = (v: any): string | null => {
+    if (!v && v !== 0) return null;
+    if (typeof v === "string") {
+      const s = v.trim();
+      if (s.length === 10 && s[4] === "-" && s[7] === "-") return s;
+      if (s.length === 8 && isDigits(s))
+        return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) return toYMD_UTC(d);
+    }
+    if (typeof v === "number") {
+      const ms = v > 1e12 ? v : v * 1000;
+      const d = new Date(ms);
+      if (!isNaN(d.getTime())) return toYMD_UTC(d);
+    }
+    return null;
+  };
+  async function fetchExternalMacroJSON(): Promise<EconEvent[]> {
+  try {
+    const MACRO_JSON_URL = (import.meta as any).env?.VITE_MACRO_JSON;
+    if (!MACRO_JSON_URL) return [];
+    const r = await fetch(MACRO_JSON_URL, { headers: { Accept: "application/json" } });
+    if (!r.ok) return [];
+    const j = await r.json();
+    const arr = Array.isArray(j) ? j : Array.isArray(j?.events) ? j.events : [];
+    return (arr as any[]).map((x) => {
+      const date = (/\d{4}-\d{2}-\d{2}/.exec((x?.date || x?.releaseDate || x?.nextRelease || x?.eventDate || x?.datetime || "").toString())?.[0]) || "";
+      const time = (/\b\d{2}:\d{2}\b/.exec((x?.time || x?.releaseTime || x?.datetime || "").toString())?.[0]) || "";
+      const title = (x?.title || x?.name || x?.event || "").toString();
+      return { title, date, time };
+    }).filter(e => e.title && e.date);
+  } catch {
+    return [];
+  }
+}
+  const isFiniteNumber = (v: any) => Number.isFinite(Number(v));
+  const round = (n: number, d = 2) =>
+    Math.round(n * Math.pow(10, d)) / Math.pow(10, d);
+  function riskFromScore(s: number) {
+    let bucket = "Moderate";
+    let color = "text-yellow-400";
+    if (s <= 3) {
+      bucket = "Low";
+      color = "text-green-400";
+    } else if (s <= 6) {
+      bucket = "Moderate";
+      color = "text-yellow-400";
+    } else if (s <= 8) {
+      bucket = "High";
+      color = "text-orange-400";
+    } else {
+      bucket = "Very High";
+      color = "text-red-400";
+    }
+    return { bucket, color };
+  }
+
+
+  // Derived features passed to AI and Quick Stats
+  function buildDerived({
+    spot,
+    strike,
+    optionType,
+    pricePaid,
+    greeks,
+    daysToExpiry,
+  }: {
+    spot: number | null;
+    strike: number;
+    optionType: "CALL" | "PUT";
+    pricePaid: number | null;
+    greeks: {
+      delta: number | null;
+      gamma: number | null;
+      theta: number | null;
+      vega: number | null;
+      iv: number | null;
+      openInterest: number | null;
+    };
+    daysToExpiry: number;
+  }) {
+    const isCall = optionType === "CALL";
+    const s = Number.isFinite(spot as number) ? (spot as number) : NaN;
+    const k = strike;
+    const paid = Number.isFinite(pricePaid as number) ? (pricePaid as number) : NaN;
+
+
+    const moneyness = Number.isFinite(s) ? (isCall ? s / k : k / s) : NaN;
+    const distancePct = Number.isFinite(s) ? ((isCall ? k - s : s - k) / s) : NaN;
+    const thetaPer$100 = Number.isFinite(greeks.theta as number)
+      ? (greeks.theta as number) * 100
+      : null;
+    const vegaPerVolPt$100 = Number.isFinite(greeks.vega as number)
+      ? (greeks.vega as number) * 100
+      : null;
+    const theoreticalBreakeven = Number.isFinite(paid)
+      ? isCall
+        ? k + paid
+        : k - paid
+      : null;
+    const breakevenGapPct =
+      Number.isFinite(s) && Number.isFinite(theoreticalBreakeven as number)
+        ? (((theoreticalBreakeven as number) - s) / s) * 100
+        : null;
+
+
+    const intrinsic = Number.isFinite(s)
+      ? isCall
+        ? Math.max(0, s - k)
+        : Math.max(0, k - s)
+      : null;
+    const extrinsic =
+      Number.isFinite(paid) && Number.isFinite(intrinsic as number)
+        ? Math.max(0, (paid as number) - (intrinsic as number))
+        : null;
+    const extrinsicPct =
+      Number.isFinite(extrinsic as number) && Number.isFinite(paid)
+        ? ((extrinsic as number) / (paid as number)) * 100
+        : null;
+
+
+    return {
+      dte: daysToExpiry,
+      moneyness,
+      distance_otm_pct: Number.isFinite(distancePct) ? Number(distancePct * 100) : null,
+      theta_per_100: thetaPer$100,
+      vega_per_volpt_per_100: vegaPerVolPt$100,
+      breakeven: theoreticalBreakeven,
+      breakeven_gap_pct: breakevenGapPct,
+      extrinsic_pct: extrinsicPct,
+    };
+  }
+
+
+  // -----------------------------
+  // Score drivers + nudge (for decimals)
+  // -----------------------------
+  function numberOrNull(v: any) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+
+
+  function buildScoreDrivers(args: {
+    dte: number;
+    ivPct: number | null;
+    distance_otm_pct: number | null;
+    delta: number | null;
+    theta: number | null;
+    vega: number | null;
+    oi: number | null;
+    breakeven_gap_pct: number | null;
+    earningsSoonTxt: string;
+    macroSoon: string[];
+  }): string[] {
+    const drivers: string[] = [];
+    if (args.earningsSoonTxt !== "none")
+      drivers.push(`Earnings ${args.earningsSoonTxt} → event risk/IV swing`);
+    if (args.macroSoon.length)
+      drivers.push(`${args.macroSoon[0]} → macro volatility risk`);
+    if (args.dte <= 10) drivers.push(`Short DTE (${args.dte}) → faster theta decay`);
+    if (args.ivPct !== null) {
+      if (args.ivPct >= 60)
+        drivers.push(`Elevated IV (${args.ivPct.toFixed(0)}%) → IV crush risk`);
+      else if (args.ivPct <= 25)
+        drivers.push(`Low IV (${args.ivPct.toFixed(0)}%) → cheaper premium, move matters`);
+    }
+    if (args.distance_otm_pct !== null) {
+      const d = Math.abs(args.distance_otm_pct);
+      if (d >= 15) drivers.push(`Deep OTM (~${d.toFixed(0)}%) → low hit probability`);
+      else if (d <= 2) drivers.push(`Near ATM (~${d.toFixed(1)}%) → higher gamma`);
+    }
+    if (args.delta !== null) {
+      const a = Math.abs(args.delta);
+      if (a >= 0.7)
+        drivers.push(
+          `High delta (${args.delta.toFixed(2)}) → stock-like; assignment risk if ITM near expiry`
+        );
+      else if (a <= 0.25)
+        drivers.push(`Low delta (${args.delta.toFixed(2)}) → needs outsized move`);
+    }
+    if (args.theta !== null && Math.abs(args.theta) >= 0.1)
+      drivers.push(`Large theta (~$${Math.round(Math.abs(args.theta) * 100)}/day)`);
+    if (args.vega !== null && Math.abs(args.vega) >= 0.15)
+      drivers.push(`High vega (${args.vega.toFixed(2)}) → sensitive to IV`);
+    if (args.oi !== null && args.oi < 500)
+      drivers.push(`Thin liquidity (OI ${args.oi}) → wider spreads`);
+    if (args.breakeven_gap_pct !== null) {
+      const g = args.breakeven_gap_pct;
+      if (g > 10) drivers.push(`Breakeven far (+${g.toFixed(1)}%)`);
+      else if (g < -5) drivers.push(`Breakeven inside (-${Math.abs(g).toFixed(1)}%)`);
+    }
+    return drivers.slice(0, 6);
+  }
+
+
+  function computeScoreNudge(args: {
+  dte: number;
+  ivPct: number | null;
+  distance_otm_pct: number | null;
+  oi: number | null;
+  breakeven_gap_pct: number | null;
+}): number {
+  let n = 0;
+
+  // normalize nullable inputs to numbers so TS stops complaining
+  const dte = args.dte; // already a number
+  const iv  = args.ivPct ?? NaN;
+  const dist = args.distance_otm_pct ?? NaN;    // signed in, we’ll abs()
+  const oi   = args.oi ?? NaN;
+  const g    = args.breakeven_gap_pct ?? NaN;
+
+  // Time left (smaller penalty; small credit for long time)
+  if (Number.isFinite(dte)) {
+    if (dte <= 5) n += 0.25;
+    else if (dte <= 10) n += 0.10;
+    else if (dte >= 90) n -= 0.10;
+  }
+
+  // IV (reward truly low IV more; soften high IV penalty)
+  if (Number.isFinite(iv)) {
+    if (iv <= 18) n -= 0.30;
+    else if (iv <= 25) n -= 0.15;
+    else if (iv >= 60) n += 0.15;
+  }
+
+  // Distance from ATM (use the signed % you already compute upstream)
+  if (Number.isFinite(dist)) {
+    const d = Math.abs(dist);
+    if (d <= 1.5) n -= 0.20;
+    else if (d <= 3) n -= 0.10;
+    else if (d >= 25) n += 0.30;
+    else if (d >= 15) n += 0.20;
+  }
+
+  // Liquidity (reward very high OI; still penalize thin chains)
+  if (Number.isFinite(oi)) {
+    if (oi < 100) n += 0.30;
+    else if (oi < 500) n += 0.15;
+    else if (oi >= 10000) n -= 0.25;
+    else if (oi >= 5000) n -= 0.15;
+  }
+
+  // Breakeven gap (% from spot to breakeven)
+  if (Number.isFinite(g)) {
+    if (g > 10) n += 0.25;
+    else if (g > 5) n += 0.10;
+    else if (g < -5) n -= 0.25;
+    else if (Math.abs(g) <= 2) n -= 0.10;
+  }
+
+  // Clamp overall nudge
+  if (n > 0.5) n = 0.5;
+  if (n < -0.5) n = -0.5;
+  return n;
+}
+function computeRuleRiskScore(args: {
+  dte: number;                     // days to expiry
+  ivPct: number | null;            // e.g., 42 (%)
+  distance_otm_pct: number | null; // signed (we'll abs it)
+  oi: number | null;               // open interest
+  breakeven_gap_pct: number | null;// % from spot to breakeven (+ = needs move)
+  earningsSoonTxt?: string;        // "today", "in 3 day(s)", "none"
+  macroSoon?: string[];            // events in next 7 days
+}): number {
+  let s = 2.0; // start "safe-ish"
+
+  // DTE (time risk)
+  const d = args.dte;
+  if (d <= 1) s += 7;
+  else if (d <= 2) s += 6;
+  else if (d <= 5) s += 4;
+  else if (d <= 10) s += 2.5;
+  else if (d >= 180) s -= 0.8;
+  else if (d >= 90)  s -= 0.4;
+
+  // IV level (vol premium & crush risk)
+  const iv = args.ivPct;
+  if (iv != null) {
+    if (iv >= 80) s += 1.5;
+    else if (iv >= 60) s += 1.0;
+    else if (iv <= 25) s -= 0.4;
+  }
+
+  // Distance from ATM (probability/gamma)
+  const dist = Number.isFinite(args.distance_otm_pct as any) ? Math.abs(args.distance_otm_pct as number) : null;
+  if (dist != null) {
+    if (dist >= 20) s += 1.5;
+    else if (dist >= 10) s += 1.0;
+    else if (dist <= 2)  s += 0.3; // ATM: gamma/whipsaw risk
+  }
+
+  // Liquidity
+  const oi = args.oi;
+  if (oi != null) {
+    if (oi < 100)  s += 1.0;
+    else if (oi < 500) s += 0.5;
+    else if (oi > 5000) s -= 0.2;
+  }
+
+  // Breakeven distance (needs big move?)
+  const g = args.breakeven_gap_pct;
+  if (g != null) {
+    if (g > 15) s += 1.5;
+    else if (g > 10) s += 1.0;
+    else if (g < -5) s -= 0.5; // already inside breakeven → safer
+  }
+
+  // Event risk (earnings/macro upcoming)
+  if ((args.earningsSoonTxt || "").startsWith("today")) s += 1.5;
+  else if ((args.earningsSoonTxt || "").includes("in ") && (args.earningsSoonTxt || "").includes("day")) s += 0.8;
+  if (args.macroSoon && args.macroSoon.length) s += 0.5;
+
+  return Math.max(0, Math.min(10, Number(s.toFixed(1))));
+}
+
+  // -----------------------------
+  // AI (lazy-load OpenAI SDK)
+  // -----------------------------
+  type NumericGreeks = {
+    delta: number | null;
+    gamma: number | null;
+    theta: number | null;
+    vega: number | null;
+    iv: number | null;
+    openInterest: number | null;
+  };
+type NumericQuote = { bid: number | null; ask: number | null; last: number | null; mark: number | null };
+
+type AnalyzeOpts = {
+  greeksOverride?: NumericGreeks;
+  contractOverride?: string;
+  quoteOverride?: NumericQuote; // <— NEW
+};
+
+  function sanitizeNarrative(s: string | undefined) {
+    if (!s) return s;
+    const badPhrases = [
+      /we\s+(lack|don['’]t have)/i,
+      /\bunknown\b/i,
+      /not\s+provided/i,
+      /can('?|no) ?t\s+assess/i,
+      /hard\s+to\s+gauge/i,
+      /missing\s+(data|numbers|metrics)/i,
+      /\bdelta\b.*\bis\b/i,
+      /\btheta\b.*\bis\b/i,
+      /\bvega\b.*\bis\b/i,
+    ];
+    let out = s;
+    for (const re of badPhrases) {
+      out = out
+        .split(/(?<=[.!?])\s+/)
+        .filter((sent) => !re.test(sent))
+        .join(" ");
+    }
+    return out.trim();
+  }
+
+
+  function makeBuddySystemPrompt() {
+  return `
+You are a casual, supportive trading buddy. Think of yourself like a mix of a fellow trader and a therapist. 
+Tone: human, conversational, encouraging. Be impressed if the user is up, empathetic if they’re down. 
+Don’t just repeat stats — instead, pick the 1–2 things that really stand out and talk about those. 
+If a Greek is extreme (like very high IV, very negative theta, or delta near 1/0), call it out in plain terms. 
+Describe how the option might behave (decay, IV crush, lotto odds, big sensitivity). 
+Never list every number — only highlight the outliers or what really matters. 
+Do NOT provide next steps or instructions — this section is just perspective and vibes. 
+
+STRICT JSON OUTPUT:
+{
+  "score": number,
+  "headline": string,
+  "narrative": "3–5 sentences of casual, buddy-style reflection — supportive, digestible, highlighting only what’s most important.",
+  "advice": string[],
+  "explainers": string[],
+  "risks": string[],
+  "watchlist": string[],
+  "strategy_notes": string[],
+  "confidence": number
+}
+Output raw JSON only — no markdown, no backticks.
+  `.trim();
+}
+function makeRoutesSystemPrompt() {
+  return `
+You are a blunt-but-supportive trading buddy. You must output three routes for the *exact* contract the user entered:
+- Aggressive Approach  (risk-seeking)
+- Middle of the Road   (balanced)
+- Conservative Approach (risk-off)
+Then choose ONE as your "If it was me" pick.
+
+Tone: human, casual, empathetic if they’re down bad; impressed if they’re up big. Be concise and concrete.
+
+ABSOLUTE CONSTRAINTS
+- Do NOT suggest rolling, switching strikes/expiries, hedging, or adding new positions. Decide only on THIS contract: Exit, Take profits/Trim, Hold (tight stop), Let it ride small.
+- When recommending “Trim”, ALWAYS phrase it conditionally:
+  - “If you have more than one contract, trim X%.”
+  - “If this is your only contract, either exit or keep it as a tiny lotto (clearly say which).”
+- Never assume the user has multiple contracts. Use the conditional phrasing above.
+
+ROUTE SEMANTICS (very important)
+- Aggressive Approach = risk-seeking. Prefer “Let it ride small”, “Hold into the move”, or “Keep tiny lotto” when there’s still time/catalyst. 
+  - Aggressive SHOULD NOT recommend “Exit/Close” unless the contract expiry is imminent (hours left) with no catalyst.
+- Middle of the Road = balanced. Consider “Hold with a tight stop” or “Take partial profits” (trim wording must follow the conditional rule above).
+- Conservative Approach = risk-off. Prefer “Exit now” / “Take profits” to reduce risk quickly.
+
+DECISION INPUTS (use judgment; don’t dump raw numbers)
+- PnL %, DTE/time decay, IV (crush risk), delta/gamma context (ATM vs deep OTM/ITM), liquidity/spreads, earnings/macro proximity.
+- Translate into plain English: “theta’s chewing”, “IV crush likely”, “lotto odds”, “behaves like stock” etc.
+
+STRICT JSON OUTPUT (no markdown, no backticks):
+{
+  "routes": {
+    "aggressive": {
+      "label": "Aggressive Approach",
+      "action": "string",
+      "rationale": "string",
+      "guardrail": "string|null"
+    },
+    "middle": {
+      "label": "Middle of the Road",
+      "action": "string",
+      "rationale": "string",
+      "guardrail": "string|null"
+    },
+    "conservative": {
+      "label": "Conservative Approach",
+      "action": "string",
+      "rationale": "string",
+      "guardrail": "string|null"
+    }
+  },
+  "pick": {
+    "route": "aggressive|middle|conservative",
+    "reason": "string",
+    "confidence": 0-100
+  }
+}
+  `.trim();
+}
+  function makeBuddyUserPrompt(payload: any) {
+    const { ticker, optionType, strike, expiry, spot, greeks, derived, dte, earnings, macro_events } = payload;
+
+
+// Normalize IV to a percent integer (e.g., 0.68 -> 68, "68%" -> 68)
+const ivPct = (() => {
+  const raw = greeks?.iv as any;
+  if (raw == null) return null;
+  if (typeof raw === "number") {
+    // If it's a decimal (<= 1), convert to percent; if already like 68, leave it.
+    const val = raw <= 1 ? raw * 100 : raw;
+    return Number.isFinite(val) ? Math.round(val) : null;
+  }
+  // strings fallback
+  const n = Number(String(raw).replace("%", ""));
+  return Number.isFinite(n) ? Math.round(n) : null;
+})();
+    const distancePct = Number.isFinite(derived?.distance_otm_pct) ? Math.abs(derived.distance_otm_pct) : null;
+
+
+    let earningsSoonTxt = "none";
+    if (earnings?.date) {
+      const now = Date.now();
+      const ed = new Date(earnings.date + "T00:00:00Z").getTime();
+      const daysAway = Math.floor((ed - now) / 86_400_000);
+      if (daysAway <= 0) earningsSoonTxt = `today ${earnings.when ? `(${earnings.when})` : ""}`.trim();
+      else if (daysAway <= 7) earningsSoonTxt = `in ${daysAway} day(s) ${earnings.when ? `(${earnings.when})` : ""}`.trim();
+      else if (daysAway <= 30) earningsSoonTxt = `in ~${daysAway} day(s)`;
+    }
+
+
+    const macroSoon = (macro_events || [])
+      .filter((e: any) => {
+        if (!e?.date) return false;
+        const md = new Date(e.date + "T00:00:00Z").getTime();
+        const days = Math.floor((md - Date.now()) / 86_400_000);
+        return days >= 0 && days <= 7;
+      })
+      .map((e: any) => `${e.title} on ${e.date}${e.time ? " " + e.time : ""}`);
+
+
+    const priorityHints = {
+      earnings_window: earningsSoonTxt,
+      macro_soon: macroSoon,
+      iv_pct: ivPct,
+      deep_otm_pct: distancePct,
+      dte,
+    };
+
+
+    return `Analyze this options trade:
+
+
+Trade:
+- Ticker: ${ticker}
+- Type: ${optionType}
+- Strike: ${strike}
+- Expiry: ${expiry}
+- Spot: ${spot ?? "N/A"}
+- DTE: ${dte}
+
+
+Greeks:
+- Delta: ${greeks?.delta ?? "N/A"}
+- Gamma: ${greeks?.gamma ?? "N/A"}
+- Theta: ${greeks?.theta ?? "N/A"}
+- Vega: ${greeks?.vega ?? "N/A"}
+- IV (%): ${ivPct ?? "N/A"}
+- Open Interest: ${greeks?.openInterest ?? "N/A"}
+
+
+Derived:
+- Moneyness ratio: ${Number.isFinite(derived?.moneyness) ? derived.moneyness : "N/A"}
+- Distance OTM %: ${Number.isFinite(derived?.distance_otm_pct) ? derived.distance_otm_pct.toFixed(2) + "%" : "N/A"}
+- Breakeven: ${Number.isFinite(derived?.breakeven) ? derived.breakeven : "N/A"}
+- Breakeven gap %: ${Number.isFinite(derived?.breakeven_gap_pct) ? derived.breakeven_gap_pct.toFixed(2) + "%" : "N/A"}
+- Theta per $100: ${Number.isFinite(derived?.theta_per_100) ? derived.theta_per_100 : "N/A"}
+- Vega per $100 per 1 vol-pt: ${Number.isFinite(derived?.vega_per_volpt_per_100) ? derived.vega_per_volpt_per_100 : "N/A"}
+
+
+Context:
+- Earnings: ${earnings?.date ? `${earnings.date}${earnings.when ? " (" + earnings.when + ")" : ""}${earnings.confirmed ? ", confirmed" : ", estimated"}` : "none in range"}
+- Macro (next 6): ${(payload?.macro_events || []).map((e: any) => `${e.title} on ${e.date}${e.time ? " " + e.time : ""}`).join(" | ") || "none"}
+
+
+Priority hints (steer the analysis):
+${JSON.stringify(priorityHints)}
+${
+  payload.ownsPosition
+    ? "User ALREADY OWNS the contract. Tailor advice to managing/adjusting/closing."
+    : "User DOES NOT OWN this yet (prospecting). Tailor advice to ENTRY timing, limit price, risk budget, and conditions to skip. Avoid 'take profits/trim' language."
+}
+
+Remember: Explain *drivers*, not definitions. Score can be decimal.`;
+  }
+function makeRoutesUserPrompt(input: {
+  finalScore: number;
+  type: "CALL" | "PUT";
+  strike: number;
+  spot: number;
+  dte: number;
+  iv: number | null;
+  theta: number | null;
+  delta: number | null;
+  gamma: number | null;
+  pricePaid: number | null;
+  bid: number | null;
+  ask: number | null;
+  last: number | null;
+  mark: number | null;
+  pnlPct: number | null;
+  breakevenGapPct: number | null;
+  earningsDays: number | null;
+  macroSoon: string | null;
+  liquidityOi: number | null;
+  spreadWide: boolean | null;
+  // ✅ NEW:
+  ownsPosition?: boolean;
+}) {
+  const {
+    finalScore, type, strike, spot, dte,
+    iv, theta, delta, gamma,
+    pricePaid, bid, ask, last, mark, pnlPct,
+    breakevenGapPct, earningsDays, macroSoon, liquidityOi, spreadWide,
+    ownsPosition,
+  } = input;
+
+  return `
+We are deciding ONLY about this specific option contract (no switching tickers, no hedges).
+
+User context:
+- Owns position: ${ownsPosition ? "YES" : "NO (prospecting)"}
+- Score (0-10): ${finalScore}
+- Type/Strike/Spot: ${type} / ${strike} / ${Number.isFinite(spot) ? spot : "N/A"}
+- DTE: ${dte}
+- IV%: ${iv ?? "N/A"} | Theta/day (per contract $): ${theta ?? "N/A"} | Delta: ${delta ?? "N/A"} | Gamma: ${gamma ?? "N/A"}
+- Bid/Ask/Last/Mark: ${bid ?? "—"} / ${ask ?? "—"} / ${last ?? "—"} / ${mark ?? "—"}
+- Price paid: ${pricePaid ?? "N/A"} | PnL%: ${pnlPct ?? "N/A"}
+- Breakeven gap %: ${breakevenGapPct ?? "N/A"}
+- Earnings in days: ${earningsDays ?? "N/A"} | Macro soon: ${macroSoon ?? "none"}
+- OI (liquidity): ${liquidityOi ?? "N/A"} | Spread wide: ${spreadWide ?? "N/A"}
+
+Instructions:
+${ownsPosition
+  ? `Provide 3 routes for managing an existing position:
+- Aggressive Approach: e.g., "Let it ride small / add / tight stop" plus ONE guardrail
+- Middle of the Road: "Hold with conditions / partial trim / roll if X"
+- Conservative Approach: "Take profits / close / reduce risk"
+
+Then output ONE pick ("If it was me"): route + reason.`
+  : `Provide 3 routes for ENTRY decision (user does NOT own it):
+- Aggressive Entry: "Probe small at limit $X / breakout entry" + ONE guardrail
+- Measured Entry: "Wait for pullback / tighter limit / require signal X"
+- Conservative Route: "Skip", with rationale why skipping is wise
+
+Then output ONE pick ("If it was me"): route + reason. Avoid ‘take profit/trim’ since user isn’t in.`
+}
+
+Output strictly JSON:
+{
+  "routes": {
+    "aggressive": {"label": "...", "action": "...", "rationale": "...", "guardrail": "..." | null},
+    "middle": {"label": "...", "action": "...", "rationale": "...", "guardrail": "..." | null},
+    "conservative": {"label": "...", "action": "...", "rationale": "...", "guardrail": "..." | null}
+  },
+  "pick": {"route": "aggressive|middle|conservative", "reason": "string"}
+}
+`.trim();
+}
+
+
+async function analyzeWithAI(opts: AnalyzeOpts = {}) {
+  console.log("analyzeWithAI start");
+  try {
+    if (!OPENAI_KEY) {
+      setLlmStatus("Missing VITE_OPENAI_KEY");
+      addDebug("AI skipped — missing OPENAI key");
+      return;
+    }
+    if (!form.ticker || !form.type || !form.strike || !form.expiry) return;
+    const consideringEntry = form.pricePaid === "" || form.pricePaid == null;
+
+    setIsGenLoading(true);
+    setLlmStatus("Analyzing…");
+
+    // ---------- parse helpers ----------
+    const toNumOrNull = (s: string) =>
+      s && s !== "—" && isFinite(Number(s)) ? Number(s) : null;
+    const ivPctToFloat = (s: string) => {
+      if (!s || s === "—") return null;
+      const z = Number(String(s).replace("%", ""));
+      return Number.isFinite(z) ? z / 100 : null;
+    };
+
+    // ---------- numeric greeks ----------
+    const greeksNumbers: NumericGreeks =
+      opts?.greeksOverride ?? {
+        delta: toNumOrNull(greeks.delta),
+        gamma: toNumOrNull(greeks.gamma),
+        theta: toNumOrNull(greeks.theta),
+        vega: toNumOrNull(greeks.vega),
+        iv: ivPctToFloat(greeks.iv),
+        openInterest: toNumOrNull(greeks.openInterest),
+      };
+
+    // ---------- derived ----------
+    const d = buildDerived({
+      spot: form.spot === "" ? null : Number(form.spot),
+      strike: Number(form.strike),
+      optionType: form.type as "CALL" | "PUT",
+      pricePaid: form.pricePaid === "" ? null : Number(form.pricePaid),
+      greeks: greeksNumbers,
+      daysToExpiry,
+    });
+
+    // ---------- context for drivers ----------
+    const ivPct =
+      Number.isFinite(greeksNumbers.iv as number)
+        ? Math.round((greeksNumbers.iv as number) * 100)
+        : null;
+
+    let earningsSoonTxt = "none";
+    if (earnings?.date) {
+      const now = Date.now();
+      const ed = new Date(earnings.date + "T00:00:00Z").getTime();
+      const daysAway = Math.floor((ed - now) / 86_400_000);
+      if (daysAway <= 0)
+        earningsSoonTxt = `today ${earnings.when ? `(${earnings.when})` : ""}`.trim();
+      else if (daysAway <= 7)
+        earningsSoonTxt = `in ${daysAway} day(s) ${earnings.when ? `(${earnings.when})` : ""}`.trim();
+      else if (daysAway <= 30) earningsSoonTxt = `in ~${daysAway} day(s)`;
+    }
+
+    const macroSoon = (econEvents || [])
+      .filter((e) => {
+        if (!e?.date) return false;
+        const md = new Date(e.date + "T00:00:00Z").getTime();
+        const days = Math.floor((md - Date.now()) / 86_400_000);
+        return days >= 0 && days <= 7;
+      })
+      .map((e) => `${e.title} on ${e.date}${e.time ? " " + e.time : ""}`);
+
+    // ---------- drivers + nudges ----------
+    const localDrivers = buildScoreDrivers({
+      dte: daysToExpiry,
+      ivPct,
+      distance_otm_pct: d.distance_otm_pct,
+      delta: greeksNumbers.delta,
+      theta: greeksNumbers.theta,
+      vega: greeksNumbers.vega,
+      oi: greeksNumbers.openInterest,
+      breakeven_gap_pct: d.breakeven_gap_pct,
+      earningsSoonTxt,
+      macroSoon,
+    });
+
+    const nudge = computeScoreNudge({
+      dte: daysToExpiry,
+      ivPct,
+      distance_otm_pct: d.distance_otm_pct,
+      oi: greeksNumbers.openInterest,
+      breakeven_gap_pct: d.breakeven_gap_pct,
+    });
+
+    // ---------- lazy-load OpenAI SDK ----------
+    let OpenAIClientCtor: any;
+    try {
+      OpenAIClientCtor = (await import("openai")).default;
+    } catch (err) {
+      console.error("Failed to load OpenAI SDK in browser:", err);
+      addDebug("Failed to load OpenAI SDK module", err);
+      setLlmStatus("AI module unavailable");
+      setIsGenLoading(false);
+      return;
+    }
+
+    const client = new OpenAIClientCtor({
+      apiKey: OPENAI_KEY,
+      dangerouslyAllowBrowser: true,
+    });
+
+    // ---------- main “buddy” call ----------
+    const systemPrompt = makeBuddySystemPrompt();
+    const userPrompt = makeBuddyUserPrompt({
+      ticker: form.ticker.toUpperCase(),
+      optionType: form.type as "CALL" | "PUT",
+      strike: Number(form.strike),
+      expiry: form.expiry,
+      pricePaid: form.pricePaid === "" ? null : Number(form.pricePaid),
+      spot: form.spot === "" ? null : Number(form.spot),
+      greeks: greeksNumbers,
+      macro_events: econEvents.slice(0, 6),
+      earnings,
+      derived: d,
+      ownsPosition: !consideringEntry,
+      dte: daysToExpiry,
+    });
+
+    async function callOpenAI(useStrictJson: boolean) {
+      return await client.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0.9,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        ...(useStrictJson ? { response_format: { type: "json_object" } } : {}),
+      });
+    }
+
+    let resp;
+    try {
+      resp = await callOpenAI(true);
+    } catch (err: any) {
+      addDebug("OpenAI strict JSON failed, retrying", err);
+      resp = await callOpenAI(false);
+    }
+
+    const txt = resp?.choices?.[0]?.message?.content?.trim() || "{}";
+    let parsedJSON: any = {};
+    try {
+      parsedJSON = JSON.parse(txt);
+    } catch (err) {
+      addDebug("AI JSON parse error, attempting brace-slice", err);
+      const match = txt.match(/\{[\s\S]*\}/);
+      if (match) {
+        try {
+          parsedJSON = JSON.parse(match[0]);
+        } catch (err2) {
+          addDebug("AI JSON parse failed again", err2);
+        }
+      }
+    }
+
+    const safeNarr = sanitizeNarrative(parsedJSON?.narrative);
+
+    // ---------- base rule score (fallback) ----------
+    const ruleOnly = computeRuleRiskScore({
+      dte: daysToExpiry,
+      ivPct,
+      distance_otm_pct: d.distance_otm_pct,
+      oi: greeksNumbers.openInterest,
+      breakeven_gap_pct: d.breakeven_gap_pct,
+      earningsSoonTxt,
+      macroSoon,
+    });
+
+    const clampScore = (n: any) =>
+      Number.isFinite(n) ? Math.max(0, Math.min(10, Number(n))) : ruleOnly;
+
+    // ---------- combine AI score + nudges ----------
+    const baseScore = clampScore(parsedJSON?.score);
+
+    // ---- PnL cushion nudge ----
+    const paidVal = (() => {
+      const refMark =
+        opts?.quoteOverride && Number.isFinite(opts.quoteOverride.mark as any)
+          ? (opts.quoteOverride.mark as number)
+          : undefined;
+      const n = normalizePaid(form.pricePaid, refMark);
+      return Number.isFinite(n as any) ? (n as number) : NaN;
+    })();
+
+    const q = opts?.quoteOverride;
+    const mid =
+      q && Number.isFinite(q?.bid as any) && Number.isFinite(q?.ask as any) && (q!.ask as number) > 0
+        ? (((q!.bid as number) + (q!.ask as number)) / 2)
+        : NaN;
+    const markNow = Number.isFinite(mid) ? mid
+      : (q && Number.isFinite(q?.last as any) ? (q!.last as number)
+      : (q && Number.isFinite(q?.mark as any) ? (q!.mark as number) : NaN));
+
+    const pnlPct = Number.isFinite(paidVal) && Number.isFinite(markNow)
+      ? ((markNow - paidVal) / paidVal) * 100
+      : null;
+
+    const dteForNudge = Number.isFinite((daysToExpiry as any)) ? (daysToExpiry as number) : 999;
+
+    let cushionN = 0;
+    if (pnlPct !== null) {
+      if (pnlPct <= -60) cushionN += 1.8;
+      else if (pnlPct <= -40) cushionN += 0.9;
+      else if (pnlPct <= -20) cushionN += 0.5;
+      else if (pnlPct >= 80) cushionN -= 1.0;
+      else if (pnlPct >= 40) cushionN -= 0.7;
+      else if (pnlPct >= 20) cushionN -= 0.4;
+
+      if (dteForNudge <= 10 && pnlPct < 0) cushionN += 0.3; // short DTE & red = riskier
+      if (dteForNudge <= 5  && pnlPct > 0) cushionN += 0.1; // very short & green = tiny bump
+    }
+    console.log("[CUSHION] paid, mark, pnl%, dte, cushionN:", paidVal, markNow, pnlPct, dteForNudge, cushionN);
+
+    // ---- FINAL SCORE ----
+    const CALIBRATION = { scale: 0.85, bias: -1.2 };
+    const recenter = (s: number) => (s * CALIBRATION.scale) + CALIBRATION.bias;
+    const finalScore = Math.max(0, Math.min(10, recenter(baseScore) + nudge + cushionN));
+
+    // ---------- Inputs for "What I'd do if I were you" ----------
+    const ivPctForRoutes = Number.isFinite(ivPct as any) ? (ivPct as number) : null;
+    const bidNow = (q && Number.isFinite(q?.bid as any)) ? (q!.bid as number) : null;
+    const askNow = (q && Number.isFinite(q?.ask as any)) ? (q!.ask as number) : null;
+    const lastNow = (q && Number.isFinite(q?.last as any)) ? (q!.last as number) : null;
+    const markNowForRoutes = Number.isFinite(markNow as any) ? (markNow as number) : null;
+
+    const deltaNum = Number.isFinite(greeksNumbers.delta as any) ? Number(greeksNumbers.delta) : null;
+    const gammaNum = Number.isFinite(greeksNumbers.gamma as any) ? Number(greeksNumbers.gamma) : null;
+    const thetaNum = Number.isFinite(greeksNumbers.theta as any) ? Number(greeksNumbers.theta) : null;
+
+    const pnlPctForRoutes = (pnlPct === null || !Number.isFinite(pnlPct as any)) ? null : Number(pnlPct);
+    const breakevenGapPct = Number.isFinite(d.breakeven_gap_pct as any) ? Number(d.breakeven_gap_pct) : null;
+
+    const earningsDays = (() => {
+      if (!earnings?.date) return null;
+      const ed = new Date(earnings.date + "T00:00:00Z").getTime();
+      return Math.floor((ed - Date.now()) / 86_400_000);
+    })();
+
+    const macroSoonStr = (() => {
+      const near = (econEvents || []).find((e) => {
+        const md = new Date(e.date + "T00:00:00Z").getTime();
+        const d = Math.floor((md - Date.now()) / 86_400_000);
+        return d >= 0 && d <= 7;
+      });
+      return near ? near.title : null;
+    })();
+
+    const liquidityOi = Number.isFinite(greeksNumbers.openInterest as any)
+      ? Number(greeksNumbers.openInterest)
+      : null;
+
+    const spreadWide = (Number.isFinite(bidNow as any) && Number.isFinite(askNow as any) && (askNow as number) > 0)
+      ? (((askNow as number) - (bidNow as number)) / (askNow as number) > 0.15)
+      : null;
+
+    // ---------- LLM explainers filtered + insights base ----------
+    const llmExplainers: string[] = Array.isArray(parsedJSON?.explainers)
+      ? parsedJSON.explainers
+      : [];
+    const filteredLLM = llmExplainers.filter(
+      (x) => !/^(delta|theta|vega|gamma)\b.*\bis\b/i.test(String(x))
+    );
+    const combinedDrivers = [...localDrivers, ...filteredLLM].slice(0, 6);
+
+    const parsed: Insights = {
+      score: Math.round(finalScore * 10) / 10,
+      headline: (parsedJSON?.headline ?? "").toString().slice(0, 140),
+      narrative: (safeNarr ?? "").toString().slice(0, 1200),
+      advice: Array.isArray(parsedJSON?.advice) ? parsedJSON.advice.slice(0, 6) : [],
+      explainers: combinedDrivers,
+      risks: Array.isArray(parsedJSON?.risks) ? parsedJSON.risks.slice(0, 5) : [],
+      watchlist: Array.isArray(parsedJSON?.watchlist) ? parsedJSON.watchlist.slice(0, 4) : [],
+      strategy_notes: Array.isArray(parsedJSON?.strategy_notes) ? parsedJSON.strategy_notes.slice(0, 3) : [],
+      // keep confidence in the type if you want, but UI no longer shows it
+      confidence: Number.isFinite(parsedJSON?.confidence)
+        ? Math.max(0, Math.min(1, parsedJSON.confidence))
+        : undefined,
+    };
+
+    setInsights(parsed);
+
+    // ---------- AI call: "What I'd do if I were you" (3 routes + pick) ----------
+    try {
+const routesUser = makeRoutesUserPrompt({
+  finalScore,
+  type: form.type as "CALL" | "PUT",
+  strike: Number(form.strike),
+  spot: form.spot === "" ? NaN : Number(form.spot),
+  dte: daysToExpiry,
+  iv: ivPctForRoutes,
+  theta: thetaNum,
+  delta: deltaNum,
+  gamma: gammaNum,
+  pricePaid: form.pricePaid === "" ? null : Number(form.pricePaid),
+  bid: bidNow,
+  ask: askNow,
+  last: lastNow,
+  mark: markNowForRoutes,
+  pnlPct: pnlPctForRoutes,
+  breakevenGapPct,
+  earningsDays,
+  macroSoon: macroSoonStr,
+  liquidityOi,
+  spreadWide,
+});
+
+
+      async function callOpenAIRoutes(useStrictJson: boolean) {
+        return await client.chat.completions.create({
+          model: "gpt-4o-mini",
+          temperature: 0.7,
+          messages: [
+            { role: "system", content: makeRoutesSystemPrompt() },
+            { role: "user", content: routesUser },
+          ],
+          ...(useStrictJson ? { response_format: { type: "json_object" } } : {}),
+        });
+      }
+
+      let routesResp;
+      try {
+        routesResp = await callOpenAIRoutes(true);
+      } catch (errRoutesStrict: any) {
+        addDebug("Routes strict JSON failed, retrying", errRoutesStrict);
+        routesResp = await callOpenAIRoutes(false);
+      }
+
+      const routesTxt = routesResp?.choices?.[0]?.message?.content?.trim() || "{}";
+
+      function parseRoutesLoose(s: string): any | null {
+        try { return JSON.parse(s); } catch {}
+        const m = s.match(/\{[\s\S]*\}/);
+        if (m) { try { return JSON.parse(m[0]); } catch {} }
+        return null;
+      }
+
+      const jr = parseRoutesLoose(routesTxt);
+
+      const isValid =
+  jr && jr.routes && jr.pick &&
+  jr.routes.aggressive && jr.routes.middle && jr.routes.conservative &&
+  typeof jr.routes.aggressive.action === "string" &&
+  typeof jr.routes.middle.action === "string" &&
+  typeof jr.routes.conservative.action === "string" &&
+  (jr.pick.route === "aggressive" || jr.pick.route === "middle" || jr.pick.route === "conservative") &&
+  typeof jr.pick.reason === "string"; // <- confidence no longer required
+
+      let routesForTLDR: RoutesOut;
+      if (isValid) {
+        const jrNorm = normalizeRoutes(jr as RoutesOut, { dte: daysToExpiry, bidNow });
+        setRoutes(jrNorm);
+        routesForTLDR = jrNorm;
+      } else {
+        const fallbackRoutes: RoutesOut = {
+          routes: {
+            aggressive: { label: "Aggressive Approach", action: "—", rationale: "Could not parse AI output.", guardrail: null },
+            middle:     { label: "Middle of the Road",   action: "—", rationale: "Could not parse AI output.", guardrail: null },
+            conservative:{label: "Conservative Approach",action: "—", rationale: "Could not parse AI output.", guardrail: null },
+          },
+          pick: { route: "middle", reason: "Fallback until AI responds cleanly.", confidence: 0 }
+        };
+        setRoutes(fallbackRoutes);
+        routesForTLDR = fallbackRoutes;
+      }
+    } catch (errRoutes: any) {
+      addDebug("Routes AI call failed", errRoutes);
+      setRoutes({
+        routes: {
+          aggressive: { label: "Aggressive Approach", action: "—", rationale: "AI unavailable.", guardrail: null },
+          middle:     { label: "Middle of the Road",   action: "—", rationale: "AI unavailable.", guardrail: null },
+          conservative:{label: "Conservative Approach",action: "—", rationale: "AI unavailable.", guardrail: null },
+        },
+        pick: { route: "middle", reason: "Fallback due to error.", confidence: 0 }
+      });
+    }
+
+    setLlmStatus("Done");
+  } catch (e: any) {
+    setLlmStatus(e?.message ?? "AI error");
+    addDebug("analyzeWithAI error", e);
+  } finally {
+    setIsGenLoading(false);
+  }
+}
+
+
+  // -----------------------------
+  // FINNHUB: CHAIN + SPOT
+  // -----------------------------
+  async function fetchOptionChain(symbol: string, opts?: { force?: boolean }) {
+    const s = symbol.trim().toUpperCase();
+    if (!FINNHUB_KEY) {
+      const err = new Error("Missing FINNHUB_KEY");
+      addDebug("fetchOptionChain aborted", err);
+      throw err;
+    }
+    if (!opts?.force && chainCache.current.has(s)) return chainCache.current.get(s)!;
+
+
+    const url = `https://finnhub.io/api/v1/stock/option-chain?symbol=${encodeURIComponent(
+      s
+    )}&token=${FINNHUB_KEY}`;
+    const r = await fetch(url);
+    if (!r.ok) {
+      addDebug(`Finnhub option-chain error ${r.status}`);
+      throw new Error(`Finnhub error ${r.status}`);
+    }
+    const json = await r.json();
+    const data = Array.isArray(json?.data) ? json.data : [];
+    chainCache.current.set(s, data);
+    return data;
+  }
+  const getExpirationRaw = (d: any) =>
+    d?.expirationDate ?? d?.expiration ?? d?.expiry ?? d?.expDate ?? null;
+
+
+  async function loadExpirations(tkr: string) {
+    setLoadingExp(true);
+    try {
+      const data = await fetchOptionChain(tkr);
+      const todayUTC = toYMD_UTC(new Date());
+      const exps = Array.from(
+        new Set(
+          data
+            .map((d: any) => normalizeExpiry(getExpirationRaw(d)))
+            .filter((s: string | null): s is string => !!s)
+        )
+      )
+        .filter((d) => d >= todayUTC)
+        .sort();
+      setExpirations(exps);
+      if (!exps.includes(form.expiry)) {
+        setForm((f) => ({ ...f, expiry: exps[0] ?? f.expiry }));
+      }
+    } catch (e) {
+      addDebug("loadExpirations error", e);
+    } finally {
+      setLoadingExp(false);
+    }
+  }
+
+
+  function extractLegsForType(node: any, type: "CALL" | "PUT") {
+    if (Array.isArray(node?.calls) || Array.isArray(node?.puts))
+      return type === "CALL" ? node?.calls ?? [] : node?.puts ?? [];
+    if (node?.options && Array.isArray(node.options[type])) return node.options[type];
+    const lc = type.toLowerCase();
+    if (Array.isArray(node?.[lc])) return node[lc];
+    return [];
+  }
+
+
+  async function loadStrikesAllExpiries(tkr: string, type?: "CALL" | "PUT") {
+    if (!type) {
+      setStrikes([]);
+      return;
+    }
+    setLoadingStrikes(true);
+    try {
+      const data = await fetchOptionChain(tkr);
+      const allLegs: any[] = [];
+      for (const node of data) allLegs.push(...extractLegsForType(node, type));
+      const list = Array.from(
+        new Set(
+          allLegs
+            .map((o: any) => Number(o?.strike ?? o?.strikePrice))
+            .filter((n: number) => Number.isFinite(n))
+        )
+      ).sort((a, b) => a - b);
+      setStrikes(list);
+    } catch (e) {
+      addDebug("loadStrikesAllExpiries error", e);
+    } finally {
+      setLoadingStrikes(false);
+    }
+  }
+
+
+  // Spot (Finnhub)
+async function loadSpot(ticker: string, opts?: { silent?: boolean }) {
+  if (!FINNHUB_KEY || !ticker.trim()) return;
+  if (!opts?.silent) setSpotLoading(true);
+  try {
+    const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(
+      ticker.toUpperCase()
+    )}&token=${FINNHUB_KEY}`;
+    const r = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!r.ok) {
+      if (r.status === 429) spotCooldownUntil.current = Date.now() + 60_000;
+      addDebug(`loadSpot: Finnhub error ${r.status}`);
+      throw new Error(`Finnhub error ${r.status}`);
+    }
+    const j = await r.json();
+
+    // Finnhub fields:
+    // c = current/last, o = today's open, d = abs change, dp = % change
+    const price = Number(j?.c);
+    const open  = Number(j?.o);
+
+    if (Number.isFinite(price)) {
+      setForm((f) => ({
+        ...f,
+        spot: String(price),
+        // keep previous open if API skipped it
+        open: Number.isFinite(open) ? String(open) : f.open,
+      }));
+    } else {
+      addDebug("loadSpot: no valid price in Finnhub response", j);
+    }
+  } catch (e) {
+    addDebug("loadSpot error", e);
+  } finally {
+    if (!opts?.silent) setSpotLoading(false);
+  }
+}
+
+
+  // -----------------------------
+  // POLYGON: CONTRACT SNAPSHOT (Greeks, IV, OI)
+  // -----------------------------
+  function toIsoDate(userDate: string): string {
+    const s = userDate.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2}|\d{4})$/);
+    if (!m) throw new Error(`Bad date: ${userDate}`);
+    let [_, mm, dd, yy] = m as any;
+    const year =
+      (yy as string).length === 2 ? (Number(yy) >= 70 ? `19${yy}` : `20${yy}`) : (yy as string);
+    const pad = (n: string) => n.padStart(2, "0");
+    return `${year}-${pad(mm as string)}-${pad(dd as string)}`;
+  }
+  function nearlyEqual(a: number, b: number, tol = 0.01) {
+    return Math.abs(a - b) <= tol;
+  }
+
+
+// TRADIER-ONLY: get bid/ask/last/mark (+ greeks/iv/oi if available) via serverless proxy
+async function loadPolygonGreeks(
+  ticker: string,
+  expiryInput: string,         // "YYYY-MM-DD"
+  typeLower: "call" | "put",
+  strikeInput: string
+): Promise<{
+  numericGreeks: NumericGreeks;
+  contract: string;
+  quoteNum: { bid: number | null; ask: number | null; last: number | null; mark: number | null };
+} | null> {
+  try {
+    const TRADIER_PROXY =
+      (import.meta as any).env?.VITE_TRADIER_PROXY_URL || "/.netlify/functions/tradier-quote";
+
+    const num = (x: any): number | null => {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : null;
+    };
+    const isNum = (x: any): x is number => Number.isFinite(x);
+
+    // ---- Build OCC/Polygon-style option symbol ----
+    function fmtYYMMDD(iso: string) {
+      const d = new Date(iso + "T00:00:00Z");
+      if (Number.isNaN(d.getTime())) return null;
+      const yy = String(d.getUTCFullYear()).slice(-2);
+      const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(d.getUTCDate()).padStart(2, "0");
+      return `${yy}${mm}${dd}`;
+    }
+    function fmtStrike8(x: number) {
+      const k = Math.round(x * 1000); // OCC uses strike*1000 padded
+      return String(k).padStart(8, "0");
+    }
+
+    const yymmdd = fmtYYMMDD(expiryInput);
+    const right = typeLower === "call" ? "C" : "P";
+    const strikeNum = Number(strikeInput);
+    if (!yymmdd || !Number.isFinite(strikeNum)) {
+      setPolyStatus("Tradier failed: bad expiry or strike");
+      return null;
+    }
+
+    // Keep returning contract with "O:" since your UI uses it elsewhere
+    const contract = `O:${ticker.toUpperCase()}${yymmdd}${right}${fmtStrike8(strikeNum)}`;
+    const tradierSym = contract.slice(2); // strip "O:"
+// ---- Try Polygon for Greeks (keep Tradier for quotes) ----
+// ---- Try Polygon for Greeks (keep Tradier for quotes) ----
+// ---- Try Polygon for Greeks (keep Tradier for quotes) ----
+// ---- Try Polygon for Greeks (contract snapshot endpoint) ----
+const POLY_KEY = (import.meta as any).env?.VITE_POLYGON_KEY;
+let polyGreeks: NumericGreeks | null = null;
+
+if (POLY_KEY) {
+  try {
+    // Correct endpoint: /v3/snapshot/options/{underlyingAsset}/{optionContract}
+    const polyUrl =
+      `https://api.polygon.io/v3/snapshot/options/${ticker.toUpperCase()}/${encodeURIComponent(contract)}?apiKey=${POLY_KEY}`;
+
+    const pr = await fetch(polyUrl, { headers: { Accept: "application/json" } });
+    const pj = await pr.json();
+    console.log("[POLY CONTRACT RAW]", pj);
+
+    const res = pj?.results; // single object (not array)
+    if (res) {
+      const gg = res?.greeks ?? {};
+      const toNum = (v: any) => (Number.isFinite(+v) ? +v : NaN);
+
+      polyGreeks = {
+        delta: toNum(gg?.delta),
+        gamma: toNum(gg?.gamma),
+        theta: toNum(gg?.theta),
+        vega:  toNum(gg?.vega),
+        iv:    toNum(res?.implied_volatility),
+        openInterest: toNum(res?.open_interest),
+      };
+
+      console.log("[POLY CONTRACT PARSED]", polyGreeks);
+    } else {
+      console.warn("[POLY CONTRACT] results empty for", { ticker, contract });
+    }
+  } catch (err) {
+    console.warn("[POLY CONTRACT] fetch/parse failed; will rely on Tradier fallback", err);
+  }
+}
+// ---- Call Tradier proxy (quotes only; greeks as fallback) ----
+const r = await fetch(`${TRADIER_PROXY}?symbol=${encodeURIComponent(tradierSym)}&greeks=1`, {
+  headers: { Accept: "application/json" },
+});
+if (!r.ok) {
+  setPolyStatus(`Tradier failed: ${r.status}`);
+  return null;
+}
+const j = await r.json();
+
+console.log("[TRADIER SNAP]", j, {
+  bid: j?.bid, ask: j?.ask, last: j?.last, mark: j?.mark,
+  delta: j?.delta, gamma: j?.gamma, theta: j?.theta, vega: j?.vega, iv: j?.iv
+});
+
+// Quotes
+let bidNum = num(j?.bid);
+let askNum = num(j?.ask);
+let lastNum = num(j?.last);
+let markNum = num(j?.mark);
+if (!isNum(markNum)) {
+  if (isNum(bidNum) && isNum(askNum) && (askNum as number) > 0) {
+    markNum = ((bidNum as number) + (askNum as number)) / 2;
+  } else if (isNum(lastNum)) {
+    markNum = lastNum as number;
+  }
+}
+
+// ---- Prefer Polygon Greeks; fallback to Tradier fields if Polygon missing ----
+const pick = (pg: number | undefined | null, tj: any) =>
+  Number.isFinite(pg as any) ? (pg as number) : (Number.isFinite(+tj) ? +tj : NaN);
+
+const numericGreeks: NumericGreeks = {
+  delta: pick(polyGreeks?.delta, j?.delta),
+  gamma: pick(polyGreeks?.gamma, j?.gamma),
+  theta: pick(polyGreeks?.theta, j?.theta),
+  vega:  pick(polyGreeks?.vega,  j?.vega),
+  iv:    pick(polyGreeks?.iv,    j?.iv ?? j?.implied_volatility),
+  openInterest: Number.isFinite(+j?.openInterest) ? +j.openInterest
+                : Number.isFinite(+j?.open_interest) ? +j.open_interest
+                : (Number.isFinite(polyGreeks?.openInterest as any) ? (polyGreeks!.openInterest as number) : NaN),
+};
+
+const quoteNum = {
+  bid:  isNum(bidNum)  ? bidNum  : null,
+  ask:  isNum(askNum)  ? askNum  : null,
+  last: isNum(lastNum) ? lastNum : null,
+  mark: isNum(markNum) ? markNum : null,
+};
+
+console.log("[CUSHION] merged quote+greeks:", { quoteNum, numericGreeks, contract });
+
+return { numericGreeks, contract, quoteNum };
+  } catch (e: any) {
+    console.error("loadPolygonGreeks (tradier-only) error", e);
+    addDebug("loadPolygonGreeks (tradier-only) error", e);
+    setPolyStatus(`Tradier failed: ${e?.message ?? e}`);
+    setGreeks({ delta: "—", gamma: "—", theta: "—", vega: "—", iv: "—", openInterest: "—" });
+    setMatchedContract("");
+    return null;
+  }
+}
+
+
+  // -----------------------------
+  // NEWS & EVENTS
+  // -----------------------------
+  function scoreHeadline(h: Headline, tkr: string) {
+    const title = (h.title || "").toLowerCase();
+    let s = 0;
+    const high = [
+      "downgrade",
+      "upgrade",
+      "cuts guidance",
+      "raises guidance",
+      "guidance",
+      "lawsuit",
+      "sues",
+      "sec",
+      "merger",
+      "acquisition",
+      "takeover",
+      "bankruptcy",
+      "chapter 11",
+      "halt",
+      "recall",
+      "restates",
+      "earnings",
+      "eps",
+      "revenue",
+      "outlook",
+      "misses",
+      "beats",
+      "profit warning",
+      "fomc",
+      "fed",
+      "powell",
+      "cpi",
+      "inflation",
+      "pce",
+      "jobs",
+      "payroll",
+      "minutes",
+      "rate",
+      "breach",
+      "hack",
+      "outage",
+      "strike",
+      "union",
+      "fda",
+      "approval",
+      "crl",
+    ];
+    const med = [
+      "analyst",
+      "price target",
+      "pt",
+      "buyback",
+      "dividend",
+      "share repurchase",
+      "layoffs",
+      "hiring",
+    ];
+    for (const w of high) if (title.includes(w)) s += 50;
+    for (const w of med) if (title.includes(w)) s += 15;
+    if ((h.source || "").toLowerCase().match(/sec|doj|fcc|treasury|federal reserve/)) s += 20;
+    if (title.includes(tkr.toLowerCase())) s += 10;
+    if (h.ts) {
+      const ageHrs = (Date.now() - h.ts) / 3_600_000;
+      if (ageHrs <= 3) s += 25;
+      else if (ageHrs <= 24) s += 10;
+    }
+    return s;
+  }
+
+
+  // Powell/featured overrides (no "manual override" label shown)
+// Hard-coded overrides disabled (keep empty)
+const MACRO_OVERRIDES: EconEvent[] = [];
+
+
+  function uniqueMacro(list: EconEvent[]) {
+    const seen = new Set<string>();
+    const out: EconEvent[] = [];
+    for (const e of list) {
+      const key = `${(e.title || "").toLowerCase()}|${e.date}|${e.time || ""}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push(e);
+      }
+    }
+    return out;
+  }
+
+
+
+  async function fetchEarnings(symbol: string) {
+    try {
+      if (!FINNHUB_KEY) {
+        setEarnings(null);
+        addDebug("fetchEarnings skipped — missing FINNHUB_KEY");
+        return;
+      }
+      const tkr = symbol.toUpperCase().trim();
+      const today = new Date();
+      const from = toYMD_UTC(today);
+      const to = toYMD_UTC(new Date(today.getTime() + 210 * 86_400_000));
+      const url = `https://finnhub.io/api/v1/calendar/earnings?from=${from}&to=${to}&symbol=${encodeURIComponent(
+        tkr
+      )}&token=${FINNHUB_KEY}`;
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`earnings ${r.status}`);
+      const j = await r.json();
+
+
+      const raw: any[] =
+        (Array.isArray(j?.earningsCalendar) && j.earningsCalendar) ||
+        (Array.isArray(j?.data) && j.data) ||
+        (Array.isArray(j?.events) && j.events) ||
+        [];
+
+
+      const sameTicker = (x: any) => {
+        const sym = (x?.symbol || x?.ticker || "").toString().toUpperCase();
+        return (
+          sym === tkr ||
+          sym === `${tkr}.US` ||
+          sym === `US:${tkr}` ||
+          sym.endsWith(`:${tkr}`) ||
+          sym === `${tkr}-USD`
+        );
+      };
+
+
+      const parsed = raw
+        .filter(sameTicker)
+        .map((x: any) => {
+          const dateStr = (
+            x?.date ||
+            x?.earningsDate ||
+            x?.releaseDate ||
+            x?.reportDate ||
+            ""
+          )
+            .toString()
+            .slice(0, 10);
+          const dObj = new Date(dateStr + "T00:00:00Z");
+          const hour = (x?.hour || x?.time || "").toString().toLowerCase();
+          const confirmFlag = Boolean(
+            x?.confirmed === true ||
+            x?.confirmStatus === "confirmed" ||
+            x?.status === "confirmed"
+          );
+          return {
+            date: dateStr,
+            dObj: isNaN(dObj.getTime()) ? null : dObj,
+            hour,
+            confirmed: confirmFlag,
+          };
+        })
+        .filter((e) => e.dObj && e.dObj.getTime() >= new Date(from + "T00:00:00Z").getTime())
+        .sort((a, b) => a!.dObj!.getTime() - b!.dObj!.getTime());
+
+
+      if (!parsed.length) {
+        setEarnings(null);
+        return;
+      }
+
+
+      const firstDate = parsed[0].date;
+      const sameDay = parsed.filter((p) => p.date === firstDate);
+      const next = sameDay.find((p) => p.confirmed) || sameDay[0];
+
+
+      const whenMap: Record<string, string> = {
+        bmo: "Before Open",
+        amc: "After Close",
+        "pre-market": "Pre-Market",
+        "post-market": "Post-Market",
+        pm: "Post-Market",
+        am: "Pre-Market",
+      };
+      const when = whenMap[next.hour] || (next.hour ? next.hour : undefined);
+
+
+      setEarnings({ date: next.date, when, confirmed: next.confirmed });
+    } catch (e) {
+      addDebug("fetchEarnings error", e);
+      setEarnings(null);
+    }
+  }
+
+// Always-on macro feed (independent of ticker)
+async function fetchUpcomingMacro() {
+  try {
+    const baseEvents: EconEvent[] = [];
+
+    if (FINNHUB_KEY) {
+      const from = toYMD_UTC(new Date());
+      const to = toYMD_UTC(new Date(Date.now() + 60 * 86_400_000)); // 60d window
+      const url = `https://finnhub.io/api/v1/calendar/economic?from=${from}&to=${to}&token=${FINNHUB_KEY}`;
+      const r = await fetch(url);
+      let arr: any[] = [];
+
+      if (r.ok) {
+        const j = await r.json();
+
+        // Robust array extraction
+        let raw: any[] =
+          (Array.isArray(j?.economicCalendar) && j.economicCalendar) ||
+          (Array.isArray(j?.economicCalendar?.result) && j.economicCalendar.result) ||
+          (Array.isArray(j?.economicCalendar?.data) && j.economicCalendar.data) ||
+          (Array.isArray(j?.economicCalendar?.events) && j.economicCalendar.events) ||
+          (Array.isArray(j?.result) && j.result) ||
+          (Array.isArray(j?.data) && j.data) ||
+          (Array.isArray(j?.events) && j.events) ||
+          [];
+
+        if (!raw.length && j?.economicCalendar && typeof j.economicCalendar === "object") {
+          const vals = Object.values(j.economicCalendar).filter(Array.isArray) as any[];
+          if (vals.length) raw = vals.flat();
+        }
+        arr = raw;
+      }
+
+      const keyWords = [
+        // Inflation
+        "cpi","consumer price index","core cpi","inflation",
+        "pce","core pce","personal consumption expenditures",
+        // Fed
+        "fomc","federal open market committee","federal reserve",
+        "powell","press conference","minutes","rate","interest",
+        // Labor
+        "nonfarm","payroll","jobs","unemployment","claims","jobless",
+        // ISM/PMI
+        "ism","pmi","manufacturing","services"
+      ];
+
+      const usish = (c?: string) => !c || /\b(US|United States|USA)\b/i.test(c);
+
+      for (const x of arr) {
+        const name = (x?.event || x?.title || x?.indicator || "").toString();
+        if (!name) continue;
+        const country = (x?.country || x?.region || x?.countryCode || "").toString();
+        if (!usish(country)) continue;
+
+        const date = (/\d{4}-\d{2}-\d{2}/.exec(
+          (x?.date || x?.releaseDate || x?.nextRelease || x?.eventDate || x?.datetime || "").toString()
+        )?.[0]) || "";
+        if (!date) continue;
+
+        const time = (/\b\d{2}:\d{2}\b/.exec(
+          (x?.time || x?.releaseTime || x?.datetime || "").toString()
+        )?.[0]) || "";
+
+        if (keyWords.some((k) => name.toLowerCase().includes(k))) {
+          baseEvents.push({ title: name, date, time });
+        }
+      }
+    }
+
+    // Future-only merge
+    const todayUTC = toYMD_UTC(new Date());
+    const nowHM = new Date().toISOString().slice(11,16);
+    const isFuture = (e: EconEvent) => {
+      if (!e?.date) return false;
+      if (e.date > todayUTC) return true;
+      if (e.date < todayUTC) return false;
+      if (!e.time) return true;
+      return e.time >= nowHM;
+    };
+
+    const extraA = MACRO_OVERRIDES.filter(isFuture);
+    const extraB = await fetchExternalMacroJSON();
+
+    const merged = uniqueMacro([...baseEvents, ...extraA, ...extraB])
+      .filter(isFuture)
+      .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))
+      .slice(0, 10);
+
+    setEconEvents(merged);
+
+  } catch (e) {
+    addDebug("fetchUpcomingMacro error", e);
+    setEconEvents(uniqueMacro(MACRO_OVERRIDES));
+  }
+}
+
+  async function fetchNewsAndEvents(symbol: string) {
+    const tkr = symbol.toUpperCase().trim();
+
+
+    // Headlines: Polygon → Finnhub fallback, then impact sort
+    try {
+      let list: Headline[] = [];
+      if (POLY_KEY) {
+        const url = `https://api.polygon.io/v2/reference/news?ticker=${encodeURIComponent(
+          tkr
+        )}&limit=30&apiKey=${POLY_KEY}`;
+        const r = await fetch(url, { headers: { Accept: "application/json" } });
+        if (r.ok) {
+          const j = await r.json();
+          const arr = Array.isArray(j?.results) ? j.results : [];
+          list = arr
+            .map((n: any) => ({
+              title: n?.title ?? "",
+              source: n?.publisher?.name ?? n?.publisher ?? "",
+              url: n?.article_url ?? n?.url ?? "",
+              ts: n?.published_utc ? Date.parse(n.published_utc) : undefined,
+            }))
+            .filter((h) => h.title);
+        }
+      }
+      if (!list.length && FINNHUB_KEY) {
+        const from = toYMD_UTC(new Date(Date.now() - 5 * 86_400_000));
+        const to = toYMD_UTC(new Date());
+        const url = `https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(
+          tkr
+        )}&from=${from}&to=${to}&token=${FINNHUB_KEY}`;
+        const r = await fetch(url);
+        if (r.ok) {
+          const arr = await r.json();
+          list = (Array.isArray(arr) ? arr : [])
+            .map((n: any) => ({
+              title: n?.headline ?? n?.title ?? "",
+              source: n?.source ?? "",
+              url: n?.url ?? "",
+              ts: n?.datetime ? n.datetime * 1000 : undefined,
+            }))
+            .filter((h) => h.title);
+        }
+      }
+      const scored = list.map((h) => ({ h, s: scoreHeadline(h, tkr) }));
+      scored.sort((a, b) => b.s - a.s || (b.h.ts || 0) - (a.h.ts || 0));
+      setHeadlines(scored.map((x) => x.h).slice(0, 10));
+    } catch (e) {
+      addDebug("fetchNews (headlines) error", e);
+      setHeadlines([]);
+    }
+
+
+    // Macro events: Finnhub economic calendar + overrides + optional external JSON
+    try {
+      const baseEvents: EconEvent[] = [];
+      if (FINNHUB_KEY) {
+        const from = toYMD_UTC(new Date());
+        const to = toYMD_UTC(new Date(Date.now() + 35 * 86_400_000));
+        const url = `https://finnhub.io/api/v1/calendar/economic?from=${from}&to=${to}&token=${FINNHUB_KEY}`;
+        const r = await fetch(url);
+        let arr: any[] = [];
+        if (r.ok) {
+          const j = await r.json();
+let raw: any[] =
+  (Array.isArray(j?.economicCalendar) && j.economicCalendar) ||
+  (Array.isArray(j?.economicCalendar?.result) && j.economicCalendar.result) ||
+  (Array.isArray(j?.economicCalendar?.data) && j.economicCalendar.data) ||
+  (Array.isArray(j?.economicCalendar?.events) && j.economicCalendar.events) ||
+  (Array.isArray(j?.result) && j.result) ||
+  (Array.isArray(j?.data) && j.data) ||
+  (Array.isArray(j?.events) && j.events) ||
+  [];
+
+// Fallback: if economicCalendar is an object with array children, grab them
+if (!raw.length && j?.economicCalendar && typeof j.economicCalendar === "object") {
+  const vals = Object.values(j.economicCalendar).filter(Array.isArray) as any[];
+  if (vals.length) raw = vals.flat();
+}
+arr = raw;
+        }
+        const keyWords = [
+  // Inflation
+  "cpi","consumer price index","core cpi","inflation",
+  "pce","core pce","personal consumption expenditures",
+  // Fed
+  "fomc","federal open market committee","federal reserve",
+  "powell","press conference","minutes","rate","interest",
+  // Labor
+  "nonfarm","payroll","jobs","unemployment","claims","jobless",
+  // ISM/PMI
+  "ism","pmi","manufacturing","services"
+];
+        const usish = (c?: string) => !c || /US|United States|USA/i.test(c);
+        for (const x of arr) {
+          const name = (x?.event || x?.title || x?.indicator || "").toString();
+          const country = (x?.country || x?.region || "").toString();
+          if (usish(country) && keyWords.some((k) => name.toLowerCase().includes(k))) {
+           const date = (/\d{4}-\d{2}-\d{2}/.exec(
+  (x?.date || x?.releaseDate || x?.nextRelease || x?.eventDate || x?.datetime || "").toString()
+)?.[0]) || "";
+const time = (/\b\d{2}:\d{2}\b/.exec(
+  (x?.time || x?.releaseTime || x?.datetime || "").toString()
+)?.[0]) || "";
+            baseEvents.push({ title: name, date, time });
+          }
+        }
+      }
+      // -- keep only future events (UTC-aware, same-day respects time) --
+const todayUTC = toYMD_UTC(new Date());           // "YYYY-MM-DD" in UTC
+const nowHM = new Date().toISOString().slice(11,16); // "HH:MM" in UTC
+
+const isFuture = (e: EconEvent) => {
+  if (!e?.date) return false;
+  if (e.date > todayUTC) return true;     // strictly future date
+  if (e.date < todayUTC) return false;    // past date
+  // same-day: if no time provided, keep it; else compare HH:MM
+  if (!e.time) return true;
+  return e.time >= nowHM;
+};
+
+// Overrides (kept empty or curated) → future only
+const extraA = MACRO_OVERRIDES.filter(isFuture);
+
+// Optional external curated feed (future filtered below)
+const extraB = await fetchExternalMacroJSON();
+
+// Merge → dedupe → future-only → sort → cap
+const merged = uniqueMacro([...baseEvents, ...extraA, ...extraB])
+  .filter(isFuture)
+  .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))
+  .slice(0, 10);
+
+setEconEvents(merged);
+    } catch (e) {
+      addDebug("fetchNews (macro) error", e);
+      setEconEvents(uniqueMacro(MACRO_OVERRIDES));
+    }
+  }
+
+
+  // -----------------------------
+  // INPUT + EFFECTS
+  // -----------------------------
+const onChange = (e: any) => {
+  const { name } = e.target;
+  let { value } = e.target;
+
+  if (name === "ticker") value = value.toUpperCase().replaceAll(" ", "");
+  if (name === "strike") strikeTouchedRef.current = true;
+  if (name === "ticker" || name === "type") strikeTouchedRef.current = false;
+
+  // ---- Debounced: normalize pricePaid after user pauses typing ----
+if (name === "pricePaid") {
+  // Allow raw editing while typing
+  setForm((f) => ({ ...f, pricePaid: value }));
+
+  // Hide previous results (same behavior as ticker/type edits)
+  setSubmitted(false);
+setRoutes(null);
+  // reset debounce
+  if (pricePaidDeb.current) window.clearTimeout(pricePaidDeb.current);
+  pricePaidDeb.current = window.setTimeout(() => {
+    // Use current mark as a hint when scaling 2800 -> 28.00, etc.
+    const mk = Number(quote?.mark);
+    const refMark = Number.isFinite(mk) && mk > 0 ? mk : undefined;
+
+    // normalizePaid already handles 2800 → 28.00 etc.
+    const n = normalizePaid(value, refMark);
+    if (n != null && Number.isFinite(n)) {
+      setForm((f) => ({ ...f, pricePaid: n.toFixed(2) }));
+    }
+  }, 1738) as unknown as number;
+
+  return; // prevent the generic setForm below from firing again
+}
+
+  setForm((f) => {
+    if (name === "ticker") return { ...f, ticker: value, strike: "" };
+    if (name === "type") return { ...f, type: value, strike: "" };
+    if (name === "expiry") return { ...f, expiry: value };
+    return { ...f, [name]: value };
+  });
+
+
+    if (name === "ticker" || name === "type" || name === "expiry") {
+      if (name === "ticker" || name === "type") setStrikes([]);
+      setGreeks({
+        delta: "—",
+        gamma: "—",
+        theta: "—",
+        vega: "—",
+        iv: "—",
+        openInterest: "—",
+      });
+      setPolyStatus("—");
+      setMatchedContract("");
+      setInsights({ score: 0, advice: [], explainers: [] });
+      setLlmStatus("");
+      setHeadlines([]);
+      setEconEvents([]);
+      setEarnings(null);
+    }
+    setSubmitted(false);
+  };
+
+// Populate macro (FOMC/CPI/etc.) on app load + refresh every 6h
+useEffect(() => {
+  fetchUpcomingMacro().catch(e => addDebug("macro mount error", e));
+  const id = setInterval(() => {
+    fetchUpcomingMacro().catch(e => addDebug("macro refresh error", e));
+  }, 6 * 60 * 60 * 1000); // 6 hours
+  return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
+  // Expirations when ticker changes
+  useEffect(() => {
+    if (!form.ticker.trim()) return;
+    loadExpirations(form.ticker).catch((e) => addDebug("Expirations effect error", e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.ticker]);
+
+
+  // Strikes when ticker/type changes
+  useEffect(() => {
+    if (!form.ticker.trim() || !form.type) return;
+    loadStrikesAllExpiries(form.ticker, form.type as "CALL" | "PUT").catch((e) =>
+      addDebug("Strikes effect error", e)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.ticker, form.type]);
+
+
+// Auto-select closest strike to live spot whenever spot/strikes change,
+// unless the user has manually chosen a strike.
+useEffect(() => {
+  if (!strikes.length) return;
+
+
+  const s = Number(form.spot);
+  if (!Number.isFinite(s)) return;
+
+
+  // compute closest strike to spot
+  const closest = strikes.reduce(
+    (prev, curr) => (Math.abs(curr - s) < Math.abs(prev - s) ? curr : prev),
+    strikes[0]
+  );
+
+
+  const current = Number(form.strike);
+  const needsUpdate = !Number.isFinite(current) || Math.abs(current - closest) > 1e-9;
+
+
+  if (needsUpdate && !strikeTouchedRef.current) {
+    setForm((f) => ({ ...f, strike: String(closest) }));
+  }
+}, [strikes, form.spot, form.ticker, form.type]);
+
+
+  // Spot polling (10s)
+  useEffect(() => {
+    if (!form.ticker.trim()) return;
+    let id: number | null = null;
+    loadSpot(form.ticker).catch((e) => addDebug("Initial spot error", e));
+    const tick = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() < spotCooldownUntil.current) return;
+      loadSpot(form.ticker, { silent: true }).catch((e) => addDebug("Spot poll error", e));
+    };
+    id = window.setInterval(tick, 10000);
+    return () => {
+      if (id) window.clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.ticker]);
+
+
+  // Submit handler: fetch everything once and analyze (min 6s overlay)
+  async function handleSubmit() {
+    if (!form.ticker || !form.type || !form.expiry || !form.strike) return;
+    setSubmitted(true);
+    setShowDisclaimer(false);
+    setOverlayOpen(true);
+
+
+    try {
+      const typeLower = (form.type === "CALL" ? "call" : "put") as "call" | "put";
+
+
+      const snap = await loadPolygonGreeks(form.ticker, form.expiry, typeLower, form.strike);
+      console.log("[CUSHION] snap.quoteNum:", snap?.quoteNum); // <— add this one line
+      // TEMP: log and wire greeks from the loader
+console.log("[GREEKS RAW]", snap?.numericGreeks);
+
+const g = snap?.numericGreeks;
+setGreeks({
+  delta: Number.isFinite(g?.delta as any) ? (g!.delta as number).toFixed(4) : "—",
+  gamma: Number.isFinite(g?.gamma as any) ? (g!.gamma as number).toFixed(4) : "—",
+  theta: Number.isFinite(g?.theta as any) ? (g!.theta as number).toFixed(4) : "—",
+  vega:  Number.isFinite(g?.vega  as any) ? (g!.vega  as number).toFixed(2) : "—",
+  iv:    Number.isFinite(g?.iv    as any) ? ((g!.iv as number) * 100).toFixed(1) + "%" : "—",
+  openInterest: Number.isFinite(g?.openInterest as any)
+    ? String(Math.round(g!.openInterest as number))
+    : "—",
+});
+      if (snap?.quoteNum) {
+  setQuote({
+    bid: snap.quoteNum.bid?.toFixed(2) ?? "—",
+    ask: snap.quoteNum.ask?.toFixed(2) ?? "—",
+    last: snap.quoteNum.last?.toFixed(2) ?? "—",
+    mark: snap.quoteNum.mark?.toFixed(2) ?? "—",
+    src: "Tradier",
+  });
+}
+console.log("[QUOTE UI STATE]", snap?.quoteNum, "→", { bid: snap?.quoteNum?.bid?.toFixed?.(2), ask: snap?.quoteNum?.ask?.toFixed?.(2), last: snap?.quoteNum?.last?.toFixed?.(2), mark: snap?.quoteNum?.mark?.toFixed?.(2) });
+
+      await Promise.all([fetchNewsAndEvents(form.ticker), fetchEarnings(form.ticker)]);
+
+
+await analyzeWithAI({
+  greeksOverride: snap?.numericGreeks ?? undefined,
+  contractOverride: snap?.contract,
+  quoteOverride: snap?.quoteNum, // <-- this is the new part
+});
+
+
+      await sleep(6000);
+    } catch (e) {
+      addDebug("handleSubmit error", e);
+    } finally {
+      setOverlayOpen(false);
+    }
+  }
+  // -----------------------------
+  // DERIVED METRICS (UI)
+  // -----------------------------
+  const daysToExpiry = form.expiry
+    ? Math.max(
+        0,
+        Math.ceil(
+          (new Date(form.expiry + "T00:00:00Z").getTime() - Date.now()) / 86_400_000
+        )
+      )
+    : 0;
+  const k = num(form.strike);
+  const spotNum = num(form.spot);
+ const mk = Number(quote?.mark);
+const refMark = Number.isFinite(mk) && mk > 0 ? mk : undefined;
+const paid = getPaidNormalized(form.pricePaid, refMark) ?? NaN;
+  const openNum = num(form.open);
+const pctDay =
+  Number.isFinite(openNum) && Number.isFinite(spotNum) && openNum !== 0
+    ? ((spotNum - openNum) / openNum) * 100
+    : NaN;
+  const isCall = form.type === "CALL";
+  const breakeven =
+    Number.isFinite(k) && Number.isFinite(paid) ? (isCall ? k + paid : k - paid) : NaN;
+
+
+const parsed = {
+  strike: Number.isFinite(k) ? k : NaN,
+  spot: Number.isFinite(spotNum) ? spotNum : NaN,
+  open: Number.isFinite(openNum) ? openNum : NaN,
+  pctDay: Number.isFinite(pctDay) ? pctDay : NaN,
+  breakeven,
+};
+
+
+  const showBreakeven =
+    form.pricePaid.trim() !== "" && Number.isFinite(parsed.breakeven);
+
+
+const ivPctUI =
+  greeks.iv && greeks.iv !== "—" ? Number(String(greeks.iv).replace("%", "")) : null;
+
+const ruleFallbackUI = computeRuleRiskScore({
+  dte: daysToExpiry,
+  ivPct: ivPctUI,
+  distance_otm_pct: Number.isFinite(parsed.spot) && Number.isFinite(parsed.strike)
+    ? ((parsed.spot - parsed.strike) / parsed.strike) * 100 // signed, same shape your builder uses
+    : null,
+  oi: greeks.openInterest && greeks.openInterest !== "—" ? Number(greeks.openInterest) : null,
+  breakeven_gap_pct: Number.isFinite(parsed.breakeven) && Number.isFinite(parsed.spot)
+    ? ((parsed.breakeven - parsed.spot) / parsed.spot) * 100
+    : null,
+});
+
+const rawScore =
+  Number.isFinite(insights.score) ? Number(insights.score) : ruleFallbackUI;
+const displayScore = Math.max(0, Math.min(10, rawScore));
+  const { bucket: riskBucket, color: riskColor } = riskFromScore(displayScore);
+// DTE color (simple & safe)
+const dteColor =
+  !Number.isFinite(daysToExpiry as any) ? "text-neutral-400"
+  : (daysToExpiry as number) <= 2  ? "text-rose-400"
+  : (daysToExpiry as number) <= 7  ? "text-amber-400"
+  : (daysToExpiry as number) <= 21 ? "text-yellow-400"
+  : "text-green-400";
+
+  // -----------------------------
+  // Autocomplete state (FIXED)
+  // -----------------------------
+  const [tickerQuery, setTickerQuery] = useState("");
+  const [tickerOpts, setTickerOpts] = useState<
+    Array<{ symbol: string; name?: string }>
+  >([]);
+  const [tickerOpen, setTickerOpen] = useState(false);
+  const [tickerIdx, setTickerIdx] = useState(-1);
+  const searchAbort = useRef<AbortController | null>(null);
+  const debTimer = useRef<number | null>(null);
+  const pricePaidDeb = useRef<number | null>(null);
+  const searchSeq = useRef(0);
+
+
+
+
+// - For any query, only symbols that START WITH the typed text are shown.
+// - We still hide .U/.WS/etc unless the user types a dot.
+// - If there are zero matches and the query is long (>=4), we allow a
+//   soft fallback of "contains" so the user isn't stuck completely empty.
+function rankAndDedupSymbols(
+  list: Array<{ symbol: string; name?: string }>,
+  q: string
+) {
+  const U = q.toUpperCase();
+  const hasDot = U.includes(".");
+
+
+  const hideUnitLike = (sym: string) =>
+    !hasDot && /\.(U|WS|W|R|P|A|B|C)(\.|$)?$/i.test(sym);
+
+
+  // Unique by symbol
+  const map = new Map<string, { symbol: string; name?: string }>();
+  for (const item of list) if (!map.has(item.symbol)) map.set(item.symbol, item);
+  const arr = Array.from(map.values()).filter((x) => !hideUnitLike(x.symbol));
+
+
+  // STRICT: prefix-only filter on the ticker symbol
+  let out = arr.filter((x) => x.symbol.toUpperCase().startsWith(U));
+
+
+  // Soft fallback only if nothing matches and query is long
+  if (out.length === 0 && U.length >= 4) {
+    out = arr.filter((x) => x.symbol.toUpperCase().includes(U));
+  }
+
+
+  // Rank: exact match → shorter symbols → alpha
+  out.sort((a, b) => {
+    const A = a.symbol.toUpperCase();
+    const B = b.symbol.toUpperCase();
+    const ra = A === U ? 0 : 1;
+    const rb = B === U ? 0 : 1;
+    if (ra !== rb) return ra - rb;
+    if (a.symbol.length !== b.symbol.length) return a.symbol.length - b.symbol.length;
+    return A.localeCompare(B);
+  });
+
+
+  return out.slice(0, 20);
+}
+
+
+// Debounced Polygon ticker search (prefix-first + exact + fuzzy, race guarded)
+useEffect(() => {
+  if (!POLY_KEY) return;
+  const q = tickerQuery.trim().toUpperCase();
+
+
+  if (debTimer.current) window.clearTimeout(debTimer.current);
+  if (q.length < 1) {
+    setTickerOpts([]);
+    setTickerOpen(false);
+    return;
+  }
+
+
+  debTimer.current = window.setTimeout(async () => {
+    const mySeq = ++searchSeq.current;
+    try {
+      if (searchAbort.current) searchAbort.current.abort();
+      const ctrl = new AbortController();
+      searchAbort.current = ctrl;
+
+
+      // 1) Prefix query: only tickers that START WITH q
+      const prefixUrl =
+        `https://api.polygon.io/v3/reference/tickers` +
+        `?market=stocks&active=true` +
+        `&ticker.gte=${encodeURIComponent(q)}` +
+        `&ticker.lte=${encodeURIComponent(q + "ZZZZZZ")}` +
+        `&sort=ticker&limit=100&apiKey=${POLY_KEY}`;
+
+
+      // 2) Exact ticker (fast)
+      const exactUrl =
+        `https://api.polygon.io/v3/reference/tickers` +
+        `?ticker=${encodeURIComponent(q)}` +
+        `&market=stocks&active=true&limit=1&apiKey=${POLY_KEY}`;
+
+
+      // 3) Fuzzy (fallback/extra)
+      const fuzzyUrl =
+        `https://api.polygon.io/v3/reference/tickers` +
+        `?market=stocks&active=true&search=${encodeURIComponent(q)}` +
+        `&limit=50&apiKey=${POLY_KEY}`;
+
+
+      const [prefixRes, exactRes, fuzzyRes] = await Promise.allSettled([
+        fetch(prefixUrl, { signal: ctrl.signal }),
+        fetch(exactUrl,  { signal: ctrl.signal }),
+        fetch(fuzzyUrl,  { signal: ctrl.signal }),
+      ]);
+
+
+      let raw: Array<{ symbol: string; name?: string }> = [];
+      const pushFrom = (json: any) => {
+        const arr = (json?.results || [])
+          .filter((x: any) => typeof x?.ticker === "string")
+          .map((x: any) => ({ symbol: x.ticker as string, name: x?.name as string | undefined }));
+        raw.push(...arr);
+      };
+
+
+      if (prefixRes.status === "fulfilled" && prefixRes.value.ok) pushFrom(await prefixRes.value.json());
+      if (exactRes.status  === "fulfilled" && exactRes.value.ok)  pushFrom(await exactRes.value.json());
+      if (fuzzyRes.status  === "fulfilled" && fuzzyRes.value.ok)  pushFrom(await fuzzyRes.value.json());
+
+
+      // NOTE: removed the line that injected the "typed symbol" fake option.
+
+
+      const ranked = rankAndDedupSymbols(raw, q); // your existing (prefix-only) ranker
+
+
+      if (mySeq !== searchSeq.current) return; // drop stale
+      setTickerOpts(ranked);
+      setTickerOpen(ranked.length > 0);
+      setTickerIdx(ranked.length ? 0 : -1);
+    } catch (e) {
+      if (mySeq !== searchSeq.current) return;
+      addDebug("Ticker search error", e);
+      setTickerOpts([]);
+      setTickerOpen(false);
+    }
+  }, 150) as unknown as number;
+
+
+  return () => {
+    if (debTimer.current) window.clearTimeout(debTimer.current);
+  };
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [tickerQuery, POLY_KEY]);
+// Hide/reset results while the user is typing a *different* ticker (before they pick)
+useEffect(() => {
+  const q = tickerQuery.trim().toUpperCase();
+  const chosen = form.ticker.trim().toUpperCase();
+
+  if (submitted && q && q !== chosen) {
+    // hide the results panel right away
+    setSubmitted(false);
+
+    // optional: quick clear so stale data doesn't flash
+    // (comment out any lines you don't have setters for)
+    setPolyStatus?.("—");
+    setMatchedContract?.("");
+    setGreeks?.({ delta:"—", gamma:"—", theta:"—", vega:"—", iv:"—", openInterest:"—" });
+    setInsights?.({ score: 0, advice: [], explainers: [] });
+    setLlmStatus?.("");
+    setHeadlines?.([]);
+    setEconEvents?.([]);
+    setEarnings?.(null);
+  }
+}, [tickerQuery, form.ticker, submitted]);
+
+
+
+  const isDisabled =
+    !form.ticker || !form.type || !form.expiry || !form.strike || loadingExp || loadingStrikes;
+
+function renderTLDR() {
+  // reuse values you already compute in v1.03
+  const iv = ivPctUI; // number | null (e.g., 68)
+  const beGapPct =
+    Number.isFinite(parsed.breakeven) && Number.isFinite(parsed.spot)
+      ? (((parsed.breakeven as number) - (parsed.spot as number)) / (parsed.spot as number)) * 100
+      : NaN;
+
+  // POP if we have IV or delta (uses your existing helper)
+  const pop = probITM({
+    spot: Number(parsed.spot),
+    strike: Number(parsed.strike),
+    isCall,
+    ivPct: Number.isFinite(iv) ? (iv as number) : null,
+    dte: daysToExpiry,
+  });
+
+  // pick the nearest macro (same logic style you use elsewhere)
+  const nearMacro = (econEvents || []).find((e) => {
+    const md = new Date(e.date + "T00:00:00Z").getTime();
+    const d = Math.floor((md - Date.now()) / 86_400_000);
+    return d >= 0 && d <= 7;
+  });
+
+  const bits: React.ReactNode[] = [];
+
+  // opener by risk bucket
+  const opener =
+    riskBucket === "Very High" ? "Lotto-like risk" :
+    riskBucket === "High"      ? "High risk" :
+    riskBucket === "Moderate"  ? "Manageable risk" :
+                                 "Low risk";
+  bits.push(<span key="o" className={`${riskColor} font-semibold`}>{opener}</span>);
+
+  // time pressure
+  if (daysToExpiry <= 10) bits.push(<span key="t"> — short DTE; theta will bite.</span>);
+
+  // IV flavor
+  if (Number.isFinite(iv) && (iv as number) >= 60) {
+    bits.push(<span key="iv"> IV is rich; crush risk if the catalyst passes.</span>);
+  } else if (Number.isFinite(iv) && (iv as number) <= 25) {
+    bits.push(<span key="ivl"> IV is cheap; price move matters more.</span>);
+  }
+
+  // breakeven nudge
+  if (Number.isFinite(beGapPct) && (beGapPct as number) > 10) {
+    bits.push(<span key="be"> Needs ~{(beGapPct as number).toFixed(1)}% just to breakeven.</span>);
+  }
+
+  // event awareness
+  if (earnings?.date) {
+    const now = Date.now();
+    const ed = new Date(earnings.date + "T00:00:00Z").getTime();
+    const d  = Math.floor((ed - now) / 86_400_000);
+    const when = d <= 0 ? "today" : `in ${d}d`;
+    bits.push(<span key="er"> Earnings {when}; expect IV swing.</span>);
+  } else if (nearMacro) {
+    bits.push(<span key="m"> {nearMacro.title} this week; index-wide vol possible.</span>);
+  }
+
+  // POP if available
+  if (Number.isFinite(pop as any)) {
+    bits.push(<span key="p"> POP ~{pop}% ITM.</span>);
+  }
+
+  return <>{bits}</>;
+}
+
+  // -----------------------------
+  // UI
+  // -----------------------------
+  return (
+    <div className="min-h-screen bg-black text-neutral-200">
+      <Starfield />
+
+
+      {/* Top hero */}
+      <div className="max-w-5xl mx-auto px-4 pt-16 pb-6 text-center relative z-10">
+        <h1 className="text-4xl md:text-6xl font-semibold leading-tight">
+          Options are risky — but how risky is yours?
+        </h1>
+        <p className="mt-4 text-neutral-400">Enter your trade and find out in seconds.</p>
+        <svg
+          className="mx-auto mt-4 w-8 h-8 animate-bounce text-indigo-400/90"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 5v12" />
+          <path d="M6 11l6 6 6-6" />
+        </svg>
+      </div>
+
+
+      {/* Input card */}
+      <div className="max-w-5xl mx-auto px-4 pb-10">
+        <div className="form-card rounded-xl p-3 md:p-4 shadow-xl bg-neutral-950/70 border border-neutral-800">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+<TickerAutocomplete
+  label="Ticker"
+  value={form.ticker}
+  query={tickerQuery}
+  setQuery={setTickerQuery}
+  options={tickerOpts}
+  open={tickerOpen}
+  setOpen={setTickerOpen}
+  activeIdx={tickerIdx}
+  setActiveIdx={setTickerIdx}
+  onPick={(sym) => {
+    // user chose a symbol from the list
+    strikeTouchedRef.current = false;
+
+    setForm((f) => ({ ...f, ticker: sym.toUpperCase(), strike: "" }));
+    setTickerQuery(sym.toUpperCase());
+    setTickerOpen(false);
+
+    // Hide previous results immediately and prep for fresh run
+    setSubmitted(false);
+
+    // OPTIONAL: clear any stale data so nothing flashes (uncomment if you have these)
+    // setPolyStatus("—");
+    // setMatchedContract("");
+    // setGreeks({ delta: "—", gamma: "—", theta: "—", vega: "—", iv: "—", openInterest: "—" });
+    // setInsights({ score: 0, advice: [], explainers: [] });
+    // setLlmStatus("");
+    // setHeadlines([]);
+    // setEconEvents([]);
+    // setEarnings(null);
+
+    // OPTIONAL: kick off expirations/strikes now if you want
+    // void loadExpirations(sym.toUpperCase());
+  }}
+/>
+            <Select
+              label="Option Type"
+              name="type"
+              value={form.type}
+              onChange={onChange}
+              options={["", "CALL", "PUT"]}
+              className="solid-input"
+            />
+            <Select
+              label={`Strike${loadingStrikes ? " (loading…)" : ""}`}
+              name="strike"
+              value={form.strike}
+              onChange={onChange}
+              options={strikes.length ? ["", ...strikes.map((n) => String(n))] : [""]}
+              className="solid-input"
+            />
+            <Select
+              label={`Expiration${loadingExp ? " (loading…)" : ""}`}
+              name="expiry"
+              value={form.expiry}
+              onChange={onChange}
+              options={expirations.length ? ["", ...expirations] : [""]}
+              className="solid-input"
+              renderAsDate
+            />
+            <Input
+              label="Price Paid (optional)"
+              name="pricePaid"
+              type="number"
+              value={form.pricePaid}
+              onChange={onChange}
+              placeholder="1.00, 2.10 etc"
+              min="0"
+              step="0.01"
+              className="solid-input"
+            />
+            <label className="flex flex-col text-sm md:self-end">
+              <span className="invisible mb-1">Submit</span>
+              <span
+                className="block"
+                title={isDisabled ? "Please fill in inputs with valid data" : undefined}
+              >
+                <button
+                  onClick={handleSubmit}
+                  disabled={isDisabled}
+                  className={`h-12 rounded-xl font-medium w-full ${
+                    isDisabled ? "bg-neutral-800 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-500"
+                  }`}
+                >
+                  {loadingExp || loadingStrikes ? "Please wait…" : "Submit"}
+                </button>
+              </span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+
+      {/* Results */}
+      {submitted && (
+        <div className="relative z-10 max-w-5xl mx-auto px-4 pb-20">
+          {/* HEADER CARD (title + score) */}
+          <div className="form-card rounded-2xl p-5 md:p-6 mb-4 bg-neutral-950/70 border border-neutral-800">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <div className="text-xl md:text-2xl font-semibold tracking-tight">
+                  {form.ticker.toUpperCase()} {form.type} {fmtStrike(parsed.strike)} •{" "}
+                  {displayMDY(form.expiry)}
+                </div>
+<div className="text-neutral-400 text-sm mt-1">
+  <span className="mr-1">Spot</span>
+  <span className="text-neutral-100 font-medium">
+    {spotLoading ? "—" : fmt(parsed.spot)}
+  </span>
+  {Number.isFinite(parsed.pctDay) && (
+    <span
+      className={`ml-2 ${
+        parsed.pctDay > 0
+          ? "text-green-400"
+          : parsed.pctDay < 0
+          ? "text-rose-400"
+          : "text-neutral-400"
+      }`}
+      title={Number.isFinite(parsed.open) ? `Open ${fmt(parsed.open)}` : undefined}
+    >
+      {parsed.pctDay >= 0 ? "+" : ""}
+      {parsed.pctDay.toFixed(2)}%
+    </span>
+  )}
+  {showBreakeven && <> • Breakeven {fmt(parsed.breakeven)}</>}
+  {" "}• DTE{" "}
+<span className={dteColor}
+      title={
+        Number.isFinite(daysToExpiry as any)
+          ? (daysToExpiry as number) <= 2 ? "Very short (≤2d)"
+          : (daysToExpiry as number) <= 7 ? "Short (≤1w)"
+          : (daysToExpiry as number) <= 21 ? "Medium (≤3w)"
+          : "Long (>3w)"
+          : undefined
+      }>
+  {Number.isFinite(daysToExpiry as any) ? `${daysToExpiry}` : "—"}
+</span>
+</div>
+{/* Live option quote (from proxy) */}
+<div className="text-neutral-400 text-xs mt-1">
+  <span className="mr-2">Bid <span className="text-neutral-100 font-medium">{quote.bid}</span></span>
+  <span className="mr-2">Ask <span className="text-neutral-100 font-medium">{quote.ask}</span></span>
+  <span className="mr-2">Mark <span className="text-neutral-100 font-medium">{quote.mark}</span></span>
+</div>
+{/* P/L vs Price Paid */}
+{(() => {
+  const mk = Number(quote.mark);
+  const hasMk = Number.isFinite(mk) && mk > 0;
+  const paid = normalizePaid(form.pricePaid, hasMk ? mk : undefined);
+  const hasPaid = Number.isFinite(paid as any) && (paid as number) > 0;
+
+  if (!hasPaid || !hasMk) return null;
+
+  const pnl = (mk - (paid as number)) * 100;            // per contract ($)
+  const pnlPct = ((mk - (paid as number)) / (paid as number)) * 100;
+
+  const tone =
+    pnlPct >= 20 ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+  : pnlPct >= 0  ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
+  : pnlPct <= -40? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+  :                "bg-rose-500/10 text-rose-300 border border-rose-500/20";
+
+  return (
+    <div className="mt-1 text-xs">
+      <span className={`px-2 py-0.5 rounded ${tone}`}>
+        P/L {pnl >= 0 ? "+" : ""}${pnl.toFixed(0)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%)
+      </span>
+      <span className="ml-2 text-neutral-500">
+        (Paid ${(paid as number).toFixed(2)} → Mark {quote.mark})
+      </span>
+    </div>
+  );
+})()}
+              </div>
+              <div className="text-right">
+                <div className={`text-4xl md:text-5xl font-semibold ${riskColor}`}>
+                  {displayScore.toFixed(1)}
+                  <span className="text-neutral-400 text-2xl">/10</span>
+                </div>
+                <div className={`uppercase tracking-widest text-xs mt-1 ${riskColor}`}>
+                  {riskBucket}
+                </div>
+                <WhyScoreTooltip items={insights.explainers} />
+              </div>
+            </div>          
+          </div>
+
+
+          {/* SUMMARY */}
+<MiniCard
+  title={insights.headline ? "Let's take a deeper look — " + insights.headline : "Summary"}
+  className="md:col-span-2 mb-4"
+>
+  <div className="space-y-3 text-sm leading-relaxed text-neutral-200">
+    {/* Narrative (AI) */}
+    <div className="whitespace-pre-wrap">
+      {insights.narrative
+        ? insights.narrative
+        : "Pick a contract to see a plain‑English breakdown of what matters."}
+    </div>
+
+    {/* Event awareness (earnings & macro) */}
+    {(() => {
+      const soon: React.ReactNode[] = [];
+      if (earnings?.date) {
+        const now = Date.now();
+        const ed = new Date(earnings.date + "T00:00:00Z").getTime();
+        const days = Math.floor((ed - now) / 86_400_000);
+        const label =
+          days <= 0 ? `Earnings ${earnings.when ? `(${earnings.when})` : ""} today`
+          : days <= 7 ? `Earnings in ${days} day(s)${earnings.when ? ` (${earnings.when})` : ""}`
+          : `Earnings on ${displayMDY(earnings.date)}${earnings.when ? ` (${earnings.when})` : ""}`;
+        soon.push(<Chip key="earn" tone={chipTone("warning")}>{label}</Chip>);
+      }
+      const nearMacro = (econEvents || []).find((e) => {
+        const md = new Date(e.date + "T00:00:00Z").getTime();
+        const d = Math.floor((md - Date.now()) / 86_400_000);
+        return d >= 0 && d <= 7;
+      });
+      if (nearMacro) soon.push(<Chip key="macro" tone={chipTone("info")}>{nearMacro.title} soon</Chip>);
+      return soon.length ? <div className="flex flex-wrap gap-2">{soon}</div> : null;
+    })()}
+
+    {/* Beginner mistakes / risk callouts */}
+    {(() => {
+      const ivPct = (() => {
+        if (!greeks?.iv || greeks.iv === "—") return NaN;
+        const z = Number(String(greeks.iv).replace("%", ""));
+        return Number.isFinite(z) ? z : NaN;
+      })();
+      const chips: React.ReactNode[] = [];
+      if (daysToExpiry <= 10) chips.push(<Chip key="theta" tone={chipTone("warning")}>Short DTE → Lose more $ from time decay</Chip>);
+      if (Number.isFinite(ivPct) && ivPct >= 60) chips.push(<Chip key="iv" tone={chipTone("danger")}>Elevated IV → Premiums are high → IV crush risk → Lose $$$ FAST</Chip>);
+      const oi = greeks?.openInterest !== "—" ? Number(greeks.openInterest) : NaN;
+      if (Number.isFinite(oi) && oi < 500) chips.push(<Chip key="oi" tone={chipTone("warning")}>Thin liquidity (low OI)</Chip>);
+      if (showBreakeven && Number.isFinite(parsed.breakeven) && Number.isFinite(parsed.spot)) {
+        const gap = (((parsed.breakeven as number) - (parsed.spot as number)) / (parsed.spot as number)) * 100;
+        if (gap > 10) chips.push(<Chip key="beFar" tone={chipTone("danger")}>Breakeven at EXP far (+{gap.toFixed(1)}%)</Chip>);
+      }
+      return chips.length ? <div className="flex flex-wrap gap-2">{chips}</div> : null;
+    })()}
+
+    {/* Nearby alternatives (simple, actionable) */}
+    {/* What I'd do if I were you */}
+<div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-3">
+  <div className="text-neutral-300 text-xs uppercase tracking-widest mb-2">
+    
+    Routes from here - (Not Financial Advice)
+  </div>
+
+  {!routes ? (
+    <div className="text-neutral-400 text-sm">Running playbook…</div>
+  ) : (
+    <div className="space-y-3 text-sm">
+      {/* Aggressive */}
+      <div
+  className={`p-2 rounded-lg border bg-neutral-900/50 ${
+    routes.pick.route === "aggressive"
+      ? "border-red-500/70 ring-1 ring-red-400/40"
+      : "border-red-500/35"
+  }`}
+>
+        <div className="text-xs text-neutral-400">{routes.routes.aggressive.label}</div>
+        <div className="font-medium">{routes.routes.aggressive.action}</div>
+        <div className="text-neutral-300">{routes.routes.aggressive.rationale}</div>
+        {routes.routes.aggressive.guardrail && (
+          <div className="text-neutral-400 text-xs mt-1">Guardrail: {routes.routes.aggressive.guardrail}</div>
+        )}
+      </div>
+
+      {/* Middle */}
+      <div
+  className={`p-2 rounded-lg border ${
+    routes.pick.route === "middle"
+      ? "bg-neutral-800/70 border-orange-500/60"
+      : "bg-neutral-900/40 border-orange-500/30"
+  }`}
+>
+        <div className="text-xs text-neutral-400">{routes.routes.middle.label}</div>
+        <div className="font-medium">{routes.routes.middle.action}</div>
+        <div className="text-neutral-300">{routes.routes.middle.rationale}</div>
+        {routes.routes.middle.guardrail && (
+          <div className="text-neutral-400 text-xs mt-1">Guardrail: {routes.routes.middle.guardrail}</div>
+        )}
+      </div>
+
+      {/* Conservative */}
+      <div
+  className={`p-2 rounded-lg border ${
+    routes.pick.route === "conservative"
+      ? "bg-neutral-800/70 border-green-500/60"
+      : "bg-neutral-900/40 border-green-500/30"
+  }`}
+>
+        <div className="text-xs text-neutral-400">{routes.routes.conservative.label}</div>
+        <div className="font-medium">{routes.routes.conservative.action}</div>
+        <div className="text-neutral-300">{routes.routes.conservative.rationale}</div>
+        {routes.routes.conservative.guardrail && (
+          <div className="text-neutral-400 text-xs mt-1">Guardrail: {routes.routes.conservative.guardrail}</div>
+        )}
+      </div>
+
+{/* My pick */}
+<div className="mt-2 p-2 rounded-lg border border-amber-400/70 bg-neutral-900/50">
+  <div className="uppercase text-xs tracking-widest text-amber-300">If it was me</div>
+  <div className="mt-1">
+    <span className="font-medium">
+      {routes.routes[routes.pick.route].action}
+    </span>
+    <span className="text-neutral-300"> — {routes.pick.reason}</span>
+  </div>
+</div>
+    </div>
+  )}
+</div>
+
+{/* Save & Share */}
+<div className="flex flex-wrap gap-2 pt-1">
+  <button
+    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs"
+    onClick={() => {
+      const obj = currentTradeStateToObject(form, greeks, insights, daysToExpiry);
+      const url = buildShareUrl(obj);
+      navigator.clipboard?.writeText(url);
+      alert("COMING SOON");
+    }}
+  >
+    Share Link
+  </button>
+</div>
+</div>
+</MiniCard>
+          {/* DASH GRID: Greeks + Quick Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* GREEKS */}
+            <MiniCard title="Greeks Explained">
+              <div className="space-y-3 text-sm">
+                {(() => {
+                  const deltaNum = greeks.delta !== "—" ? Number(greeks.delta) : NaN;
+                  const thetaNum = greeks.theta !== "—" ? Number(greeks.theta) : NaN;
+                  const vegaNum = greeks.vega !== "—" ? Number(greeks.vega) : NaN;
+                  const oiNum =
+                    greeks.openInterest !== "—" ? Number(greeks.openInterest) : NaN;
+                  const ivStr = greeks.iv && greeks.iv !== "—" ? greeks.iv : null;
+                  const ivPct = ivStr ? Number(ivStr.replace("%", "")) : NaN;
+
+
+                  const delta$1 = Number.isFinite(deltaNum)
+                    ? Math.round(deltaNum * 100)
+                    : null;
+                  const theta$1 = Number.isFinite(thetaNum)
+                    ? Math.round(Math.abs(thetaNum) * 100)
+                    : null;
+                  const vega$1 = Number.isFinite(vegaNum)
+                    ? Math.round(Math.abs(vegaNum) * 100)
+                    : null;
+                  const vega$5 = Number.isFinite(vegaNum)
+                    ? Math.round(Math.abs(vegaNum) * 5 * 100)
+                    : null;
+
+
+                  const badgeIV = ivBadge(Number.isFinite(ivPct) ? ivPct : null);
+
+
+                  const soonBits: string[] = [];
+                  if (earnings?.date) {
+                    const now = Date.now();
+                    const ed = new Date(earnings.date + "T00:00:00Z").getTime();
+                    const d = Math.floor((ed - now) / 86_400_000);
+                    if (d <= 0)
+                      soonBits.push(
+                        `earnings ${earnings.when ? `(${earnings.when})` : ""} today`
+                      );
+                    else if (d <= 7) soonBits.push(`earnings in ${d} day(s)`);
+                  }
+                  const nearMacro = (econEvents || []).find((e) => {
+                    const md = new Date(e.date + "T00:00:00Z").getTime();
+                    const d = Math.floor((md - Date.now()) / 86_400_000);
+                    return d >= 0 && d <= 7;
+                  });
+                  if (nearMacro) soonBits.push(`${nearMacro.title} soon`);
+
+
+                  return (
+                    <>
+                      <Row
+                        icon={IconDelta}
+                        label="Delta"
+                        value={<Badge tone={deltaBadge(deltaNum).tone}>{greeks.delta}</Badge>}
+                        sub={
+                          greeks.delta !== "—"
+                            ? `≈ ${Math.round(Number(greeks.delta) * 100)}% stock sensitivity`
+                            : "—"
+                        }
+                        help={
+                          <InfoHover title="Delta (direction & probability)">
+                            <p>
+                              Delta is how much the option price changes if the stock moves $1.
+                            </p>
+                            {Number.isFinite(deltaNum) && delta$1 !== null ? (
+                              <p className="mt-1 text-neutral-300">
+                                ELI5: If the stock goes up $1, this option changes about{" "}
+                                <b>${delta$1}</b> per contract.
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-neutral-300">
+                                ELI5: $1 stock move ≈ Δ × $100 per contract.
+                              </p>
+                            )}
+                          </InfoHover>
+                        }
+                      />
+                      <Row
+                        icon={IconTheta}
+                        label="Theta"
+                        value={<Badge tone={thetaBadge(thetaNum).tone}>{greeks.theta}</Badge>}
+                        sub={
+                          greeks.theta !== "—"
+                            ? `≈ $${(Math.abs(Number(greeks.theta)) * 100).toFixed(0)} / day per contract`
+                            : "—"
+                        }
+                        help={
+                          <InfoHover title="Theta (time decay)">
+                            <p>
+                              Theta is daily time decay — how much value the option loses each day.
+                            </p>
+                            {Number.isFinite(thetaNum) && theta$1 !== null ? (
+                              <p className="mt-1 text-neutral-300">
+                                ELI5: Sleep one night → about <b>${theta$1}</b> melts from the
+                                option.
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-neutral-300">
+                                ELI5: Each day ≈ |θ| × $100 less per contract.
+                              </p>
+                            )}
+                          </InfoHover>
+                        }
+                      />
+                      <Row
+                        icon={IconVega}
+                        label="Vega"
+                        value={<Badge tone={vegaBadge(vegaNum).tone}>{greeks.vega}</Badge>}
+                        sub={
+                          greeks.vega !== "—"
+                            ? `≈ $${(Math.abs(Number(greeks.vega)) * 100).toFixed(0)} per 1 vol-pt move`
+                            : "—"
+                        }
+                        help={
+                          <InfoHover title="Vega (IV sensitivity)">
+                            <p>
+                              Vega is how much the option price shifts if implied volatility (IV)
+                              changes 1 point.
+                            </p>
+                            {Number.isFinite(vegaNum) && vega$1 !== null ? (
+                              <p className="mt-1 text-neutral-300">
+                                ELI5: IV +1 → option ≈ <b>${vega$1}</b>. If IV drops 5 pts, ≈{" "}
+                                <b>${vega$5}</b> the other way.
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-neutral-300">
+                                ELI5: 5 IV pts × vega × $100 ≈ price change.
+                              </p>
+                            )}
+                            {soonBits.length ? (
+                              <p className="mt-1 text-neutral-400">Heads up: {soonBits.join("; ")}.</p>
+                            ) : null}
+                          </InfoHover>
+                        }
+                      />
+                      <Row
+                        icon={IconOI}
+                        label="Open Interest"
+                        value={<Badge tone={oiBadge(oiNum).tone}>{greeks.openInterest}</Badge>}
+                        help={
+                          <InfoHover title="Open Interest (liquidity feel)">
+                            <p>
+                              Open Interest is how many contracts are open. Higher OI usually means
+                              easier fills and tighter spreads.
+                            </p>
+                            <p className="mt-1 text-neutral-300">
+                              ELI5: More people at the lemonade stand → easier to buy/sell quickly.
+                            </p>
+                          </InfoHover>
+                        }
+                      />
+
+
+                      <div className="border-t border-neutral-800 my-2" />
+                      <Row
+                        icon={IconVol}
+                        label="IV"
+                        value={<Badge tone={ivBadge(Number(greeks.iv.replace('%','')) || null).tone}>
+                          {ivBadge(Number(greeks.iv.replace('%','')) || null).label}
+                        </Badge>}
+                        sub={
+                          ivBadge(Number(greeks.iv.replace('%','')) || null).note === "No IV"
+                            ? "—"
+                            : `${ivBadge(Number(greeks.iv.replace('%','')) || null).note} premium`
+                        }
+                        help={
+                          <InfoHover title="Implied Volatility (expected movement)">
+                            <p>
+                              IV is the market’s guess of future movement. It tends to rise into
+                              uncertainty (earnings, CPI, FOMC) and can drop right after — the
+                              “IV crush”.
+                            </p>
+                            {Number.isFinite(vegaNum) && vega$5 !== null ? (
+                              <p className="mt-1 text-neutral-300">
+                                ELI5: If IV falls 5 points and your vega is {vegaNum.toFixed(2)},
+                                option moves ≈ <b>${vega$5}</b>.
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-neutral-300">
+                                ELI5: 5 IV pts × vega × $100 ≈ price change.
+                              </p>
+                            )}
+                            {soonBits.length ? (
+                              <p className="mt-1 text-neutral-400">Heads up: {soonBits.join("; ")}.</p>
+                            ) : null}
+                          </InfoHover>
+                        }
+                      />
+                      <div className="text-[11px] text-neutral-500">
+                        {greeks.iv && greeks.iv !== "—"
+                          ? "IV high ⇒ sideways = decay risk; IV drop ⇒ premium compresses."
+                          : "IV not available; check your data source."}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </MiniCard>
+
+
+            {/* QUICK STATS -> REPLACED WITH EXPIRY SCENARIOS */}
+<MiniCard title="Expiry Scenarios">
+  {(() => {
+    const s0 = Number.isFinite(parsed.spot) ? parsed.spot : NaN;
+    const k2 = Number.isFinite(parsed.strike) ? parsed.strike : NaN;
+    const paidOk = Number.isFinite(paid) && paid > 0;
+
+    if (!Number.isFinite(s0) || !Number.isFinite(k2)) {
+      return (
+        <div className="text-neutral-500 text-sm">
+          Pick a contract to see P/L scenarios at expiry.
+        </div>
+      );
+    }
+
+    // -------- knobs --------
+const dollarStep = Math.max(0.01, +((s0) * 0.02).toFixed(2)); // 2% of spot, min $0.01
+const stepsEachSide = 4;   // rows each side of spot (baseline window)
+// -----------------------
+
+// Make sure the table includes a small band around the *strike* as well,
+// so you always see some non-zero intrinsic rows even if spot is far OTM.
+const minSpot = s0 - stepsEachSide * dollarStep;
+const maxSpot = s0 + stepsEachSide * dollarStep;
+
+// Ensure we extend the window to cover strike ± 3 steps too
+let lo = Math.min(minSpot, k2 - 3 * dollarStep);
+let hi = Math.max(maxSpot, k2 + 3 * dollarStep);
+
+// Safety: keep bounds sensible
+if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo >= hi) {
+  lo = Math.min(s0, k2) - 3 * dollarStep;
+  hi = Math.max(s0, k2) + 3 * dollarStep;
+}
+
+const isCallLocal = isCall;
+const be = paidOk ? (isCallLocal ? k2 + paid : k2 - paid) : NaN;
+
+const intrinsicAt = (S: number) =>
+  Math.max(0, isCallLocal ? S - k2 : k2 - S) * 100; // per contract $
+
+function makeRow(S: number) {
+  const value = +intrinsicAt(S).toFixed(2);
+  const hasPaid = paidOk;
+  const paidCents = hasPaid ? paid * 100 : NaN;
+  const pl = hasPaid ? +(value - paidCents).toFixed(2) : undefined;
+  const roi =
+    hasPaid && paidCents > 0
+      ? +(((value - paidCents) / paidCents) * 100).toFixed(0)
+      : undefined;
+  return { kind: "normal" as const, S: +S.toFixed(2), value, pl, roi };
+}
+
+// Build rows from lo..hi in $1 steps (aligned so S includes exact strike if possible)
+const baseRows: Array<{ kind: "normal"; S: number; value: number; pl?: number; roi?: number }> = [];
+for (let S = lo; S <= hi + 1e-9; S += dollarStep) {
+  baseRows.push(makeRow(S));
+}
+
+// Insert breakeven row if within window (and not already present)
+if (paidOk && Number.isFinite(be) && be >= lo - 1e-6 && be <= hi + 1e-6) {
+  const beRow = makeRow(be);
+  const exists = baseRows.some((r) => Math.abs(r.S - beRow.S) < 0.005);
+  if (!exists) baseRows.push({ ...beRow, kind: "normal" });
+}
+
+// Sort by S
+baseRows.sort((a, b) => a.S - b.S);
+
+// Collapse all zero-value rows into one — but only if there’s at least
+// one non-zero row in the table. If *all* rows are zero, keep them as-is
+// (so users still see the sampled levels rather than a single row).
+const anyNonZero = baseRows.some((r) => r.value !== 0);
+let rows: Array<
+  { kind: "normal" | "collapsed" | "breakeven"; S: number; label?: string; value: number; pl?: number; roi?: number }
+> = [...baseRows];
+
+if (anyNonZero) {
+  const nonZero = rows.filter((r) => r.value !== 0);
+  const collapsedLabel = isCallLocal ? `≤ ${fmt(k2)}` : `≥ ${fmt(k2)}`;
+  const collapsedRow = {
+    kind: "collapsed" as const,
+    S: k2,
+    label: collapsedLabel,
+    value: 0,
+    pl: paidOk ? -(paid * 100) : undefined,
+    roi: paidOk ? -100 : undefined,
+  };
+  rows = [...nonZero, collapsedRow].sort((a, b) => a.S - b.S);
+}
+
+// Mark breakeven
+rows = rows.map((r) => {
+  if (!paidOk || r.pl === undefined) return r;
+  if (Math.abs(r.pl) <= 0.5) return { ...r, kind: "breakeven" as const };
+  return r;
+});
+
+const fmtSigned = (n: number) => `${n >= 0 ? "+" : ""}${fmt(n)}`;
+
+// ROI-based tone scaling
+function toneForROI(roi?: number) {
+  if (roi === undefined || !Number.isFinite(roi)) return "text-neutral-400";
+  if (roi <= -80) return "text-rose-500";
+  if (roi <= -40) return "text-rose-400";
+  if (roi < 0)   return "text-rose-300";
+  if (roi === 0) return "text-neutral-300";
+  if (roi < 40)  return "text-green-300";
+  if (roi < 80)  return "text-green-400";
+  return "text-green-500"; // 80%+
+}
+
+    // ===== POP CALC =====
+    function normalCdf(x: number) {
+      const t = 1 / (1 + 0.2316419 * Math.abs(x));
+      const d = 0.3989423 * Math.exp((-x * x) / 2);
+      let p =
+        1 -
+        d *
+          t *
+          (0.3193815 +
+            t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+      return x < 0 ? 1 - p : p;
+    }
+    const clamp = (n: number, lo: number, hi: number) =>
+      Math.max(lo, Math.min(hi, n));
+
+    let pop: number | null = null;
+    let method: "iv" | "delta" | null = null;
+
+    const ivPct =
+      greeks.iv && greeks.iv !== "—"
+        ? Number(String(greeks.iv).replace("%", ""))
+        : null;
+
+    if (
+      Number.isFinite(s0) &&
+      Number.isFinite(k2) &&
+      Number.isFinite(daysToExpiry) &&
+      (ivPct ?? null) !== null &&
+      daysToExpiry > 0 &&
+      (ivPct as number) > 0
+    ) {
+      const sigma = (ivPct as number) / 100;
+      const T = Math.max(1e-6, daysToExpiry / 365);
+      const denom = sigma * Math.sqrt(T);
+      if (denom > 0) {
+        const d2 = (Math.log(s0 / k2) - 0.5 * sigma * sigma * T) / denom;
+        const p = isCallLocal ? normalCdf(d2) : normalCdf(-d2);
+        pop = Math.round(p * 100);
+        method = "iv";
+      }
+    }
+    if (pop === null) {
+      const d =
+        greeks.delta !== "—" && Number.isFinite(Number(greeks.delta))
+          ? Number(greeks.delta)
+          : NaN;
+      if (Number.isFinite(d)) {
+        const p = isCallLocal ? clamp(d, 0, 1) : clamp(-d, 0, 1);
+        pop = Math.round(p * 100);
+        method = "delta";
+      }
+    }
+    const popTone =
+      pop === null
+        ? "text-neutral-500"
+        : pop >= 60
+        ? "text-green-300"
+        : pop >= 40
+        ? "text-yellow-300"
+        : "text-rose-300";
+
+    // ===== RENDER =====
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-neutral-400 text-xs uppercase tracking-widest">
+            <tr>
+              <th className="text-left py-1.5">Underlying (Spot)</th>
+              <th className="text-right py-1.5">Option Value</th>
+              <th className="text-right py-1.5">P/L</th>
+              <th className="text-right py-1.5">ROI</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-neutral-800">
+            {rows.map((r, i) => {
+              const isBE = r.kind === "breakeven";
+              const rowBg = isBE ? "bg-neutral-800/40" : i % 2 ? "bg-transparent" : "bg-neutral-900/30";
+              const plTone = r.pl === undefined ? "text-neutral-400" : toneForROI(r.roi);
+              const roiText =
+                r.roi === undefined ? "—" : `${r.roi >= 0 ? "+" : ""}${r.roi}%`;
+
+              return (
+                <tr key={`${r.kind}-${r.S}-${i}`} className={rowBg}>
+                  <td className="py-1.5">
+                    {r.kind === "collapsed" ? (
+                      <span className="text-neutral-400">{r.label}</span>
+                    ) : (
+                      <span className={isBE ? "font-semibold text-neutral-100" : "text-neutral-300"}>
+                        {fmt(r.S)}
+                      </span>
+                    )}
+                    {isBE && (
+                      <span className="ml-2 px-1.5 py-0.5 text-[10px] rounded bg-neutral-800 border border-neutral-700">
+                        Breakeven
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-1.5 text-right">{fmt(r.value)}</td>
+                  <td className={`py-1.5 text-right ${plTone}`}>
+                    {r.pl === undefined ? "—" : fmtSigned(r.pl)}
+                  </td>
+                  <td className={`py-1.5 text-right ${plTone}`}>{roiText}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div className="text-[11px] text-neutral-500 mt-2">
+          Intrinsic value at expiry only (ignores time value/IV).
+          <span className="ml-2">
+            {pop === null ? (
+              "Estimated POP unavailable (need IV or delta)."
+            ) : (
+              <>
+                Estimated POP (ITM at expiry):{" "}
+                <span className={popTone}>{pop}%</span>
+                <span className="text-neutral-500">
+                  {" "}
+                  ({method === "iv" ? "IV-based" : "delta proxy"})
+                </span>
+                .
+              </>
+            )}
+          </span>
+        </div>
+      </div>
+    );
+  })()}
+</MiniCard>
+
+
+          </div>
+
+
+          {/* NEWS & EVENTS */}
+          <div className="grid grid-cols-1 md:grid-cols-1 gap-4 mt-4">
+            <MiniCard title="News & Events">
+              <div className="space-y-3 text-sm">
+                {/* Earnings */}
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 flex items-center gap-3">
+                  {IconCalendarAmber}
+                  <div className="leading-tight">
+                    <div className="text-amber-200 font-medium">
+                      {earnings ? displayMDY(earnings.date) : "No upcoming earnings found"}
+                    </div>
+                    <div className="text-[11px] text-amber-300/80">
+                      {earnings ? (
+                        <>
+                          {earnings.when ? `${earnings.when}` : "Time TBA"}
+                          <span
+                            className={`ml-2 px-1.5 py-0.5 rounded text-[10px] ${
+                              earnings.confirmed
+                                ? "bg-green-500/15 text-green-300 border border-green-500/30"
+                                : "bg-yellow-500/15 text-yellow-300 border border-yellow-500/30"
+                            }`}
+                          >
+                            {earnings.confirmed ? "Confirmed" : "Estimated"}
+                          </span>
+                        </>
+                      ) : (
+                        "We’ll flag it here once it’s posted."
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+
+                {/* Macro upcoming */}
+                <div>
+                  <div className="text-neutral-400 text-xs uppercase tracking-widest mb-1">
+                    Upcoming
+                  </div>
+                  {econEvents.length ? (
+                    <ul className="space-y-1">
+                      {econEvents.map((e, i) => (
+                        <li key={`ev-${i}`} className="flex gap-2">
+                          <span className="mt-0.5">•</span>
+                          <span>
+                            {e.title} —{" "}
+                            <span className="text-neutral-500">
+                              {displayMDY(e.date)}
+                              {e.time ? ` ${e.time}` : ""}
+                            </span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="text-neutral-500 text-xs">
+                      No macro events found in the next month (COMING SOON).
+                    </div>
+                  )}
+                </div>
+
+
+                {/* Headlines */}
+<div>
+  <div className="text-neutral-400 text-xs uppercase tracking-widest mb-1">
+    Headlines
+  </div>
+
+  {headlines.length ? (
+    <>
+      {/* visible list */}
+      <ul className="space-y-2">
+        {headlines.slice(0, newsCount).map((n, i) => (
+          <li key={`hl-${i}`} className="flex gap-2">
+            <span className="mt-0.5">•</span>
+            <a
+              href={n.url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-neutral-200 hover:underline"
+              title={n.title}
+            >
+              {n.title}
+            </a>
+            {n.source && (
+              <span className="text-neutral-500 text-[11px] ml-2">
+                ({n.source})
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      {/* controls */}
+      <div className="mt-2">
+        {headlines.length > newsCount ? (
+          <button
+            type="button"
+            onClick={() =>
+              setNewsCount((c) => Math.min(headlines.length, c + 5))
+            }
+            className="text-xs text-neutral-300 hover:text-white underline"
+          >
+            Show more ({headlines.length - newsCount})
+          </button>
+        ) : headlines.length > 3 ? (
+          <button
+            type="button"
+            onClick={() => setNewsCount(3)}
+            className="text-xs text-neutral-300 hover:text-white underline"
+          >
+            Show less
+          </button>
+        ) : null}
+      </div>
+    </>
+  ) : (
+    <div className="text-neutral-500 text-xs">No recent headlines.</div>
+  )}
+</div>
+              </div>
+            </MiniCard>
+          </div>
+        </div>
+      )}
+
+
+<div className="text-center text-neutral-600 text-xs pb-10 relative z-10">
+  v1.08 · Not financial advice · Powered By AI · Data you enter is not saved
+</div>
+{!submitted && showDisclaimer && (
+  <div className="relative z-[60] isolate mt-3 max-w-2xl mx-auto text-center text-xs text-neutral-500 pointer-events-auto">
+    <p>
+      <strong>Beta Notice:</strong> TradeGauge is in open beta. Features may be incomplete or broken. Your feedback is greatly appreciated!
+      Updates are pushed weekly — Please be patient and refresh if something looks off or feels broken!
+    </p>
+
+    {PATCH_NOTES.length > 0 && (
+      <details className="mt-1">
+        <summary className="cursor-pointer select-none text-neutral-500 hover:text-neutral-400 transition">
+          Patch notes — latest update {PATCH_NOTES[0].date}
+        </summary>
+        <ul className="mt-1 list-disc space-y-0.5 pl-5 text-left">
+          {PATCH_NOTES[0].items.map((it, i) => (
+            <li key={i}>{it}</li>
+          ))}
+        </ul>
+      </details>
+    )}
+  </div>
+)}
+
+{/* Floating “Key” legend — left side */}
+{submitted && !overlayOpen && (
+  <div className="fixed left-3 top-1/3 z-40 hidden md:block print:hidden">
+    {/* Toggle button */}
+    <button
+      type="button"
+      aria-label="Toggle key legend"
+      onClick={() => setKeyOpen((o) => !o)}
+      className="mb-2 rounded-full border border-neutral-800 bg-neutral-900/80 hover:bg-neutral-800 px-3 py-1 text-xs text-neutral-300 shadow"
+    >
+      {keyOpen ? "Hide Key" : "Show Key"}
+    </button>
+
+    {/* Card */}
+    <div
+      className={[
+        "w-64 rounded-xl border border-neutral-800 bg-neutral-950/75 backdrop-blur p-3 shadow-2xl",
+        "transition-all duration-200",
+        keyOpen ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-2 pointer-events-none",
+      ].join(" ")}
+    >
+      <div className="text-[11px] uppercase tracking-widest text-neutral-400 mb-2">
+        Color Key
+      </div>
+
+      <div className="space-y-1 text-xs text-neutral-300">
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-2 w-2 rounded-full bg-green-400" />
+          <span>Typical / mild</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
+          <span>Elevated / caution</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-2 w-2 rounded-full bg-rose-400" />
+          <span>High / fragile</span>
+        </div>
+      </div>
+
+      <hr className="my-3 border-neutral-800" />
+
+      <div className="text-[11px] uppercase tracking-widest text-neutral-400 mb-1">
+        Greeks (rule of thumb)
+      </div>
+      <ul className="text-xs text-neutral-300 list-disc ml-4 space-y-1">
+        <li><span className="font-medium">Δ</span> high → more directional P/L (<span className="text-rose-400">red</span>).</li>
+        <li><span className="font-medium">Θ</span> high → fast decay (<span className="text-rose-400">red</span>).</li>
+        <li><span className="font-medium">V</span> big → IV-sensitive; events matter (<span className="text-amber-400">amber</span>/<span className="text-rose-400">red</span>).</li>
+        <li><span className="font-medium">Γ</span> near-expiry & ~ATM → snappy (<span className="text-amber-400">amber</span>/<span className="text-rose-400">red</span>).</li>
+        <li><span className="font-medium">IV%</span> high → rich premium / crush risk (<span className="text-rose-400">red</span>); low → needs price move (<span className="text-green-400">green</span>).</li>
+        <li><span className="font-medium">DTE</span> thresholds: ≤2d <span className="text-rose-400">red</span>, ≤7d <span className="text-amber-400">amber</span>, ≥21d <span className="text-green-400">green</span>.</li>
+      </ul>
+    </div>
+  </div>
+)}
+
+{/* Loading Overlay */}
+{overlayOpen && (
+  <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center">
+    {/* BACKGROUND LAYERS */}
+    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+      {/* A) Fast rainbow spinner number (shown first) */}
+      <div
+        className="font-black tracking-tight select-none"
+        style={{
+          position: "absolute",
+          fontSize: 240,
+          filter: "blur(24px)",
+          opacity: showRealBg ? 0 : 0.14,                 // fade out when real arrives
+          color: `hsl(${spinnerHue}, 100%, 55%)`,
+          transition: "opacity 180ms ease",
+          willChange: "opacity, filter",
+        }}
+      >
+        {spinnerScore.toFixed(1)}
+      </div>
+
+      {/* B) Real AI score (fades in, EXTRA blurred) */}
+      <div
+        className="font-black tracking-tight select-none"
+        style={{
+          position: "absolute",
+          fontSize: 240,
+          filter: "blur(48px) saturate(1.05)",            // extra blur here
+          opacity: showRealBg ? 0.18 : 0,                 // slightly stronger presence
+          color: Number.isFinite(Number((insights as any)?.score))
+            ? `hsl(${hueForScore(Number((insights as any)?.score))}, 100%, 55%)`
+            : "transparent",
+          transition: "opacity 180ms ease",
+          willChange: "opacity, filter",
+          textShadow: "0 0 24px rgba(0,0,0,0.35)",
+    }}
+      >
+        {Number.isFinite(Number((insights as any)?.score))
+          ? Number((insights as any).score).toFixed(1)
+          : ""}
+      </div>
+    </div>
+
+    {/* Your existing dialog/card */}
+    <div className="rounded-2xl border border-neutral-800 bg-neutral-900/80 p-6 w-[22rem] text-center shadow-2xl">
+      <LoaderSpinner />
+      <div className="mt-4 text-neutral-200 font-medium">Please wait…</div>
+      <div className="mt-2 text-neutral-400 text-sm">
+        {overlayPlaylist[overlayStep] ?? overlayMsgs[0]}
+      </div>
+
+      {/* Tiny live line still shows the rainbow spinner (or switch to real if you prefer) */}
+      <div
+        className="mt-3 text-sm font-semibold select-none"
+        style={{ color: `hsl(${spinnerHue}, 100%, 60%)` }}
+      >
+        Scoring… {spinnerScore.toFixed(1)}/10
+      </div>
+    </div>
+  </div>
+)}
+    </div>
+  );
+}
+
+
+export default function App() {
+  return <TradeGaugeApp />;
+}
+
+
+/* =========================
+   Twinkling Starfield BG
+   ========================= */
+function Starfield() {
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  const stars = useMemo(
+    () =>
+      Array.from({ length: 140 }).map(() => ({
+        left: Math.random() * 100,
+        top: Math.random() * 100,
+        size: 0.6 + Math.random() * 1.8,
+        delay: Math.random() * 5,
+        opacity: Math.min(1, (0.35 + Math.random() * 0.6) * 1.3),
+      })),
+    []
+  );
+
+  type Shooter = { id: number; left: number; top: number; tx: number; ty: number; dur: number; ang: number };
+  const [shooters, setShooters] = useState<Shooter[]>([]);
+
+  // Edge-spawn bright yellow shooters
+  useEffect(() => {
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) return;
+
+    function spawn() {
+      const edge = Math.floor(Math.random() * 4); // 0=L,1=R,2=T,3=B
+      let left: number, top: number, tx: number, ty: number;
+
+      if (edge === 0) { left = -2; top = 6 + Math.random() * 88; tx = 120; ty = Math.random() * 30 - 15; }
+      else if (edge === 1) { left = 102; top = 6 + Math.random() * 88; tx = -120; ty = Math.random() * 30 - 15; }
+      else if (edge === 2) { left = 6 + Math.random() * 88; top = -2; tx = Math.random() * 30 - 15; ty = 120; }
+      else { left = 6 + Math.random() * 88; top = 102; tx = Math.random() * 30 - 15; ty = -120; }
+
+      const ang = (Math.atan2(ty, tx) * 180) / Math.PI;
+      const dur = 1.1 + Math.random() * 0.9;
+      const id = Date.now() + Math.random();
+
+      setShooters((s) => [...s, { id, left, top, tx, ty, dur, ang }]);
+      window.setTimeout(() => setShooters((s) => s.filter((x) => x.id !== id)), dur * 1000 + 250);
+    }
+
+    const t0 = window.setTimeout(spawn, 700 + Math.random() * 1200);
+    const iv = window.setInterval(spawn, 6000 + Math.random() * 6000);
+    return () => { window.clearTimeout(t0); window.clearInterval(iv); };
+  }, []);
+
+  // Tiny parallax (pointer + tilt) for sun/stars groups
+  useEffect(() => {
+    const root = wrapRef.current;
+    if (!root) return;
+
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) return;
+
+    let raf = 0;
+    const setVars = (x: number, y: number) => {
+      root.style.setProperty("--px", x.toFixed(3));
+      root.style.setProperty("--py", y.toFixed(3));
+    };
+
+    const onPointer = (e: PointerEvent) => {
+      const w = window.innerWidth || 1, h = window.innerHeight || 1;
+      const x = (e.clientX / w) * 2 - 1, y = (e.clientY / h) * 2 - 1;
+      cancelAnimationFrame(raf); raf = requestAnimationFrame(() => setVars(x, y));
+    };
+    const onLeave = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => setVars(0, 0)); };
+    const onOrient = (e: DeviceOrientationEvent) => {
+      const gx = Math.max(-1, Math.min(1, (e.gamma ?? 0) / 30));
+      const gy = Math.max(-1, Math.min(1, (e.beta ?? 0) / 45));
+      cancelAnimationFrame(raf); raf = requestAnimationFrame(() => setVars(gx, gy));
+    };
+
+    window.addEventListener("pointermove", onPointer, { passive: true });
+    window.addEventListener("pointerleave", onLeave);
+    window.addEventListener("blur", onLeave);
+    document.addEventListener("mouseleave", onLeave);
+    window.addEventListener("deviceorientation", onOrient);
+
+    return () => {
+      window.removeEventListener("pointermove", onPointer as any);
+      window.removeEventListener("pointerleave", onLeave);
+      window.removeEventListener("blur", onLeave);
+      document.removeEventListener("mouseleave", onLeave);
+      window.removeEventListener("deviceorientation", onOrient as any);
+      cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={wrapRef}
+      className="fixed inset-0 pointer-events-none overflow-hidden -z-0"
+      style={{ ["--px" as any]: 0, ["--py" as any]: 0 }}
+    >
+      <style>{`
+  .twinkle-star {
+    position: absolute;
+    background: radial-gradient(circle,
+      rgba(255,255,255,0.95) 0%,
+      rgba(255,255,255,0.70) 40%,
+      rgba(255,255,255,0.00) 70%);
+    border-radius: 9999px;
+    animation: tg-twinkle 4s ease-in-out infinite;
+    box-shadow:
+      0 0 2px rgba(255,255,255,0.60),
+      0 0 6px rgba(255,255,255,0.35),
+      0 0 14px rgba(255,255,255,0.22);
+    filter: brightness(1.3) saturate(1.1);
+    will-change: opacity, transform, filter;
+  }
+
+  @keyframes tg-twinkle {
+    0%, 100% { opacity: 0.325; transform: scale(0.9); }
+    50%      { opacity: 1;     transform: scale(1.05); }
+  }
+
+        /* --- SUN GLOW + RAYS (glisten) --- */
+        .tg-sun-glow {
+          position:absolute; inset:-20%; pointer-events:none; mix-blend-mode: screen;
+          background: radial-gradient(circle at var(--sun-x, 110%) var(--sun-y, 40%),
+            rgba(255,210,80,0.22), rgba(255,210,80,0.12) 15%,
+            rgba(255,170,0,0.07) 28%, rgba(255,140,0,0.04) 40%,
+            rgba(255,120,0,0.02) 55%, transparent 70%);
+          filter: blur(18px);
+        }
+        .tg-sun-rays {
+          position:absolute; inset:-30%; pointer-events:none; mix-blend-mode: screen;
+          background: conic-gradient(from var(--sun-angle, 0deg) at var(--sun-x, 110%) var(--sun-y, 40%),
+            rgba(255,220,120,0.10) 0deg, transparent 12deg,
+            rgba(255,220,120,0.08) 24deg, transparent 36deg,
+            rgba(255,220,120,0.06) 48deg, transparent 60deg);
+          filter: blur(10px); opacity: .22; animation: tg-rays-glisten 9s ease-in-out infinite;
+        }
+        @property --spark-angle { syntax: '<angle>'; inherits: true; initial-value: 0deg; }
+        @keyframes tg-rays-glisten {
+          0%, 18% { opacity:.50; filter: blur(10px) brightness(1); }
+          19%     { opacity:.50; filter: blur(9px)  brightness(1.35); }
+          20%,54% { opacity:.50; filter: blur(10px) brightness(1); }
+          55%     { opacity:.32; filter: blur(9px)  brightness(1.4); }
+          56%,100%{ opacity:.50; filter: blur(10px) brightness(1); }
+        }
+        .tg-sun-rays::after {
+          content:""; position:absolute; inset:-30%; pointer-events:none; mix-blend-mode: screen;
+          filter: blur(6px); opacity: 0;
+          background: conic-gradient(
+            from calc(var(--sun-angle, 0deg) + var(--spark-angle, 0deg))
+            at var(--sun-x, 110%) var(--sun-y, 40%),
+            rgba(255,255,240,0.30) 0deg, rgba(255,255,240,0.18) 4deg, transparent 7deg
+          );
+          animation: tg-spark-angle 4.5s ease-in-out infinite;
+        }
+        @keyframes tg-spark-angle {
+          0% { --spark-angle: -8deg; opacity: 0; }
+          8% { opacity: .45; }
+          18% { --spark-angle: 0deg; opacity: 0; }
+          50% { --spark-angle: -8deg; opacity: 0; }
+          58% { opacity: .45; }
+          68% { --spark-angle: 8deg; opacity: 0; }
+          100% { --spark-angle: -8deg; opacity: 0; }
+        }
+
+        /* --- BRIGHT YELLOW SHOOTER --- */
+        .tg-shoot2 {
+          position:absolute; width:3px; height:3px; border-radius:9999px;
+          background: radial-gradient(circle, #ffdf55 0%, #ffd000 55%, rgba(255,208,0,0.6) 70%, transparent 75%);
+          box-shadow: 0 0 18px rgba(255,200,0,0.95), 0 0 36px rgba(255,200,0,0.6);
+          will-change: transform, opacity, filter; opacity:0; mix-blend-mode: screen; filter: brightness(1.15) saturate(1.05);
+          animation: tg-shoot2 var(--dur,1.4s) cubic-bezier(.22,.61,.36,1) 1 forwards;
+        }
+        .tg-shoot2::after {
+          content:""; position:absolute; right:100%; top:50%; transform: translateY(-50%);
+          height:2px; width:240px; filter: blur(0.5px);
+background: linear-gradient(90deg,
+  rgba(255,212,0,0.00) 0%,
+  rgba(255,212,0,0.65) 35%,
+  rgba(255,255,255,0.95) 85%,
+  rgba(255,255,255,0.00) 100%);
+        }
+  .tg-shoot2::before {
+  content:"";
+  position:absolute; right:100%; top:50%; transform: translateY(-50%);
+  height:4px; width:320px;
+  filter: blur(3px) saturate(1.1);
+  background: linear-gradient(90deg,
+    rgba(255,187,0,0.00) 0%,
+    rgba(255,187,0,0.35) 40%,
+    rgba(255,255,255,0.45) 85%,
+    rgba(255,255,255,0.00) 100%);
+  pointer-events:none;
+}
+@keyframes tg-shoot2 {
+  0%  { opacity:0;   transform: translate(0,0) rotate(var(--ang,-15deg)); }
+  6%  { opacity:0.9; }
+  85% { opacity:0.9; }
+  100%{ opacity:0;   transform: translate(var(--tx,60vw), var(--ty,24vh)) rotate(var(--ang,-15deg)); }
+}
+
+        /* --- Tiny Parallax (mouse/tilt) --- */
+        .parallax-sun, .parallax-stars { will-change: transform; transition: transform 80ms linear; }
+        .parallax-sun  { transform: translate(calc(var(--px, 0) * 8px),  calc(var(--py, 0) * 8px)); }
+        .parallax-stars{ transform: translate(calc(var(--px, 0) * -3px), calc(var(--py, 0) * -3px)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .twinkle-star { animation: none !important; }
+  .tg-shoot2,
+  .tg-shoot2::before,
+  .tg-shoot2::after { display: none !important; }
+  .parallax-sun, .parallax-stars { transform: none !important; transition: none !important; }
+}
+      `}</style>
+
+      {/* LAYER 0: backdrop (behind everything in this component) */}
+      <div className="absolute inset-0 bg-black z-0" />
+
+      {/* LAYER 1: sun group (absolute so it paints above backdrop) */}
+      <div className="parallax-sun absolute inset-0 z-10">
+        {/* Change --sun-x to -10% for left, 110% for right */}
+        <div className="tg-sun-glow" style={{ ["--sun-x" as any]: "50%", ["--sun-y" as any]: "10%" }} />
+        <div className="tg-sun-rays" style={{ ["--sun-x" as any]: "50%", ["--sun-y" as any]: "10%" }} />
+      </div>
+
+      {/* LAYER 2: stars (absolute; above sun for a nice light-over effect if desired) */}
+      <div className="parallax-stars absolute inset-0 z-20">
+        {stars.map((s, i) => (
+          <div
+            key={i}
+            className="twinkle-star"
+            style={{
+              left: `${s.left}%`,
+              top: `${s.top}%`,
+              width: `${s.size}px`,
+              height: `${s.size}px`,
+              animationDelay: `${s.delay}s`,
+              opacity: s.opacity,
+            }}
+          />
+        ))}
+      </div>
+
+      {/* LAYER 3: shooters (highest in this component so they streak above all) */}
+      <div className="absolute inset-0 z-30">
+        {shooters.map((s) => (
+          <div
+            key={s.id}
+            className="tg-shoot2"
+            style={{
+              left: `${s.left}vw`,
+              top: `${s.top}vh`,
+              ["--tx" as any]: `${s.tx}vw`,
+              ["--ty" as any]: `${s.ty}vh`,
+              ["--ang" as any]: `${s.ang}deg`,
+              ["--dur" as any]: `${s.dur}s`,
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* =============================
+   SMALL UI PIECES & ICONS
+   ============================= */
+function Input({
+  label,
+  name,
+  value,
+  onChange,
+  type = "text",
+  placeholder,
+  min,
+  step,
+  className,
+}: {
+  label: string;
+  name: string;
+  value: any;
+  onChange: any;
+  type?: string;
+  placeholder?: string;
+  min?: string;
+  step?: string;
+  className?: string;
+}) {
+  return (
+    <label className="flex flex-col text-sm">
+      <span className="text-neutral-400 mb-1">{label}</span>
+      <input
+        className={`h-12 rounded-xl px-3 outline-none focus:border-neutral-600 ${className || ""}`}
+        name={name}
+        value={value}
+        onChange={onChange}
+        type={type}
+        placeholder={placeholder}
+        min={min}
+        step={step}
+        aria-label={label}
+      />
+    </label>
+  );
+}
+
+
+function Select({
+  label,
+  name,
+  value,
+  onChange,
+  options,
+  className,
+  renderAsDate,
+}: {
+  label: string;
+  name: string;
+  value: any;
+  onChange: any;
+  options: any[];
+  className?: string;
+  renderAsDate?: boolean;
+}) {
+  const fmtOpt = (o: any) => {
+    const s = String(o);
+    if (renderAsDate && s && s.length === 10 && s[4] === "-" && s[7] === "-") {
+      const y = s.slice(0, 4),
+        m = s.slice(5, 7),
+        d = s.slice(8, 10);
+      return `${Number(m)}/${Number(d)}/${y}`;
+    }
+    return s === "" ? "— Select —" : s;
+  };
+
+
+  return (
+    <label className="flex flex-col text-sm">
+      <span className="text-neutral-400 mb-1">{label}</span>
+      <select
+        className={`h-12 rounded-xl px-3 outline-none focus:border-neutral-600 ${className || ""}`}
+        name={name}
+        value={value}
+        onChange={onChange}
+      >
+        {options.map((o: any, idx: number) => (
+          <option key={o ?? `opt-${idx}`} value={o}>
+            {fmtOpt(o)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+
+function MiniCard({
+  title,
+  children,
+  className = "",
+}: {
+  title: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 ${className}`}>
+      <div className="text-neutral-300 text-xs uppercase tracking-widest mb-2">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+
+function InfoHover({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="relative inline-block group mt-1">
+      <span className="text-[11px] text-neutral-400 underline decoration-dotted cursor-help select-none">
+        What’s this?
+      </span>
+      <div className="absolute left-0 z-30 mt-2 hidden w-80 group-hover:block">
+        <div className="rounded-xl border border-neutral-800 bg-neutral-900/95 backdrop-blur p-3 shadow-2xl">
+          <div className="text-neutral-200 text-xs leading-snug">
+            <div className="font-medium mb-1">{title}</div>
+            {children}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function Row({
+  icon,
+  label,
+  value,
+  sub,
+  help,
+}: {
+  icon?: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+  help?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex-1">
+        <div className="flex items-center gap-2 text-neutral-300 text-sm">
+          {icon}
+          {label}
+        </div>
+        {help && <div>{help}</div>}
+      </div>
+      <div className="text-right">
+        <div className="text-neutral-100">{value}</div>
+        {sub && <div className="text-[11px] text-neutral-500">{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
+
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="rounded-xl bg-neutral-900/60 p-3 border border-neutral-800">
+      <div className="text-neutral-400 text-xs">{label}</div>
+      <div className="text-neutral-100 text-base mt-1">{value as any}</div>
+    </div>
+  );
+}
+
+
+function Badge({ tone, children }: { tone: string; children: React.ReactNode }) {
+  return <span className={`${tone} font-medium`}>{children}</span>;
+}
+
+
+function WhyScoreTooltip({ items }: { items?: string[] }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="relative inline-block group mt-1">
+      <span
+        className="text-[11px] text-neutral-400 underline decoration-dotted cursor-help select-none"
+        aria-label="Why this score"
+      >
+        Why this score
+      </span>
+      <div className="absolute right-0 z-20 mt-2 hidden w-80 group-hover:block">
+        <div
+          role="tooltip"
+          className="rounded-xl border border-neutral-800 bg-neutral-900/90 backdrop-blur p-3 shadow-2xl"
+        >
+          <div className="space-y-2 text-xs text-neutral-200 leading-snug">
+            {items.map((e, i) => (
+              <div key={i} className="flex gap-2">
+                <span className="mt-0.5">•</span>
+                <span>{e}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function LoaderSpinner() {
+  return (
+    <svg
+      className="animate-spin mx-auto h-8 w-8 text-neutral-300"
+      viewBox="0 0 24 24"
+      fill="none"
+    >
+      <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path
+        className="opacity-90"
+        fill="currentColor"
+        d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"
+      />
+    </svg>
+  );
+}
+
+
+/* ---------- Ticker Autocomplete (FIXED) ---------- */
+function TickerAutocomplete({
+  label,
+  value,
+  query,
+  setQuery,
+  options,
+  open,
+  setOpen,
+  activeIdx,
+  setActiveIdx,
+  onPick,
+}: {
+  label: string;
+  value: string;
+  query: string;
+  setQuery: (v: string) => void;
+  options: Array<{ symbol: string; name?: string }>;
+  open: boolean;
+  setOpen: (b: boolean) => void;
+  activeIdx: number;
+  setActiveIdx: (n: number) => void;
+  onPick: (symbol: string) => void;
+}) {
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (!boxRef.current) return;
+      if (!boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [setOpen]);
+
+
+  return (
+    <div className="flex flex-col text-sm relative z-[60]" ref={boxRef}>
+      <span className="text-neutral-400 mb-1">{label}</span>
+    <input
+  className="h-12 rounded-xl px-3 outline-none focus:border-neutral-600 solid-input uppercase"
+  name="ticker"
+  value={query}
+  onChange={(e) => {
+    const v = e.target.value.toUpperCase().replaceAll(" ", "");
+    setQuery(v);
+    setOpen(true);
+  }}
+  onFocus={() => setOpen(options.length > 0)}
+  onKeyDown={(e) => {
+    if (!open) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.min(i + 1, options.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const pick = options[activeIdx] || options[0];
+      if (pick) onPick(pick.symbol);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  }}
+  placeholder="TSLA"
+  aria-label={label}
+/>
+      {open && options.length > 0 && (
+        <div className="absolute z-[60] top-full left-0 right-0 mt-1 rounded-xl border border-neutral-800 bg-neutral-900/95 backdrop-blur shadow-2xl overflow-hidden">
+          <ul className="max-h-64 overflow-auto">
+            {options.map((o, i) => (
+              <li
+                key={o.symbol}
+                className={`px-3 py-2 cursor-pointer text-sm flex items-center justify-between ${
+                  i === activeIdx ? "bg-neutral-800" : "hover:bg-neutral-850"
+                }`}
+                onMouseEnter={() => setActiveIdx(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  onPick(o.symbol);
+                }}
+                title={o.name || o.symbol}
+              >
+                <span className="font-medium">{o.symbol}</span>
+                <span className="text-neutral-400 ml-3 truncate">{o.name || ""}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/* Icons */
+const IconVol = (
+  <svg
+    className="w-4 h-4 text-neutral-400"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M3 3v18M21 21H7M7 15l4-4 3 3 6-6" />
+  </svg>
+);
+const IconDelta = (
+  <svg
+    className="w-4 h-4 text-neutral-400"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M12 4l9 16H3z" />
+  </svg>
+);
+const IconTheta = (
+  <svg
+    className="w-4 h-4 text-neutral-400"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <circle cx="12" cy="12" r="8" />
+    <path d="M8 12h8" />
+  </svg>
+);
+const IconVega = (
+  <svg
+    className="w-4 h-4 text-neutral-400"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M4 17l6-10 6 10" />
+    <path d="M10 13h4" />
+  </svg>
+);
+const IconOI = (
+  <svg
+    className="w-4 h-4 text-neutral-400"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <rect x="3" y="4" width="18" height="4" />
+    <rect x="3" y="10" width="18" height="4" />
+    <rect x="3" y="16" width="18" height="4" />
+  </svg>
+);
+const IconCalendarAmber = (
+  <svg
+    className="w-5 h-5 text-amber-300"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <rect x="3" y="4" width="18" height="18" rx="2" />
+    <path d="M16 2v4M8 2v4M3 10h18" />
+  </svg>
+);
+
+
+/* =============================
+   FORMATTERS & BADGES
+   ============================= */
+function fmt(n: number | string) {
+  const val = typeof n === "string" && n.trim() === "" ? NaN : Number(n);
+  if (!Number.isFinite(val)) return "—";
+  return val.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+  });
+}
+function fmtStrike(n: number) {
+  return Number.isFinite(n)
+    ? `$${n.toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`
+    : "—";
+}
+function ivBadge(ivPct?: number | null) {
+  if (!Number.isFinite(ivPct as number))
+    return { label: "—", note: "No IV", tone: "text-neutral-400" };
+  const v = ivPct as number;
+  if (v >= 60) return { label: `${v.toFixed(0)}%`, note: "elevated", tone: "text-red-400" };
+  if (v >= 40) return { label: `${v.toFixed(0)}%`, note: "normal-ish", tone: "text-yellow-400" };
+  return { label: `${v.toFixed(0)}%`, note: "low", tone: "text-green-400" };
+}
+function deltaBadge(delta: number) {
+  if (!Number.isFinite(delta)) return { tone: "text-neutral-400" };
+  const a = Math.abs(delta);
+  if (a >= 0.7) return { tone: "text-red-400" };
+  if (a >= 0.4) return { tone: "text-yellow-400" };
+  return { tone: "text-green-400" };
+}
+function thetaBadge(theta: number) {
+  if (!Number.isFinite(theta)) return { tone: "text-neutral-400" };
+  const mag = Math.abs(theta);
+  if (mag >= 0.2) return { tone: "text-red-400" };
+  if (mag >= 0.05) return { tone: "text-yellow-400" };
+  return { tone: "text-green-400" };
+}
+function vegaBadge(vega: number) {
+  if (!Number.isFinite(vega)) return { tone: "text-neutral-400" };
+  const a = Math.abs(vega);
+  if (a >= 0.2) return { tone: "text-red-400" };
+  if (a >= 0.05) return { tone: "text-yellow-400" };
+  return { tone: "text-green-400" };
+}
+function oiBadge(oi: number) {
+  if (!Number.isFinite(oi)) return { tone: "text-neutral-400" };
+  if (oi >= 5000) return { tone: "text-green-400" };
+  if (oi >= 500) return { tone: "text-yellow-400" };
+  return { tone: "text-red-400" };
+}

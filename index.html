@@ -1,117 +1,12 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>TradeGauge.io — Coming Soon</title>
-  <meta name="description" content="TradeGauge — Options are risky, but how risky is yours?" />
-  <style>
-    /* ---- Dark, modern base ---- */
-    :root{
-      --bg:#0b0d10;      /* page background */
-      --ink:#ecf2f8;     /* primary text */
-      --muted:#9aa7b3;   /* secondary text */
-      --accent:#4c79ff;  /* brand accent */
-      --glass:rgba(15,18,24,.55);
-      --card:rgba(22,25,33,.6);
-    }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0; background:radial-gradient(1200px 800px at 80% -10%, #152033 0%, transparent 60%),radial-gradient(900px 600px at 10% 110%, #1a283f 0%, transparent 60%),var(--bg);
-      color:var(--ink); font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; overflow:hidden;
-    }
-
-    /* ---- Animated ticker field (behind content) ---- */
-    .sky{position:fixed; inset:0; overflow:hidden; z-index:0; pointer-events:none}
-    .ticker{position:absolute; left:-20%; top:50%; transform:translateY(-50%);
-      padding:.35rem .6rem; border:1px solid rgba(255,255,255,.08); border-radius:999px;
-      background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
-      color:#d9e3ee; font-size:12px; letter-spacing:.04em; text-transform:uppercase;
-      box-shadow:0 6px 18px rgba(0,0,0,.25); filter:blur(.2px) saturate(1.05);
-      animation: drift var(--dur,24s) linear infinite; animation-delay: var(--delay,0s);
-      opacity: var(--alpha,.55);
-      backdrop-filter: blur(6px);
-    }
-    .ticker .dot{width:6px; height:6px; border-radius:999px; display:inline-block; margin-right:6px; background:var(--accent)}
-    @keyframes drift{
-      from{ transform: translate(-20vw, var(--y,0)) }
-      to{   transform: translate(120vw, var(--y,0)) }
-    }
-
-    /* ---- Foreground content ---- */
-    .wrap{position:relative; z-index:2; display:grid; place-items:center; height:100%; padding:24px}
-    .hero{max-width:820px; text-align:center; background:var(--glass); border:1px solid rgba(255,255,255,.08); border-radius:24px; padding:40px 28px; box-shadow:0 18px 60px rgba(0,0,0,.35)}
-    .logo{display:inline-flex; align-items:center; gap:10px; margin-bottom:10px; color:#cfd7e2; font-weight:700; letter-spacing:.04em}
-    .logo .mark{width:28px; height:28px; border-radius:8px; background:conic-gradient(from 180deg at 50% 50%, #4c79ff, #2dd4bf, #4c79ff); box-shadow:0 8px 20px rgba(76,121,255,.35)}
-    h1{margin:.1rem 0 .6rem; font-size:clamp(28px,6vw,46px); letter-spacing:-.02em}
-    p.sub{margin:.25rem 0 1.2rem; color:var(--muted); font-size:clamp(14px,2.2vw,18px)}
-
-    .pill{display:inline-flex; align-items:center; gap:10px; padding:10px 14px; border-radius:999px; background:var(--card); border:1px solid rgba(255,255,255,.08); color:#cfe1ff; font-size:13px}
-    .pill .bar{width:120px; height:6px; border-radius:999px; background:#0f1320; position:relative; overflow:hidden}
-    .pill .bar::after{content:""; position:absolute; inset:0; width:42%; background:linear-gradient(90deg,#2dd4bf,#4c79ff); animation:load 2.8s ease-in-out infinite}
-    @keyframes load{0%{left:-42%} 60%{left:58%} 100%{left:110%}}
-
-    .foot{margin-top:18px; display:flex; gap:12px; justify-content:center; flex-wrap:wrap}
-    .foot .badge{padding:8px 12px; border-radius:999px; background:var(--card); border:1px solid rgba(255,255,255,.08); color:#d4ddee; font-size:12px}
-  </style>
-</head>
-<body>
-  <!-- Animated background tickers -->
-  <div class="sky" id="sky"></div>
-
-  <!-- Foreground hero -->
-  <div class="wrap">
-    <div class="hero">
-      <div class="logo"><span class="mark"></span> TradeGauge</div>
-      <h1>Options are risky — but how risky is <em>yours</em>?</h1>
-      <p class="sub">We’re building a lightning‑fast option trade “reality check” that translates Greeks, IV, news and events into plain English — before you click buy.</p>
-      <div class="pill"><span>Coming Soon...</span><span class="bar"></span></div>
-      <div class="foot">
-        <div class="badge">Secure • Fast</div>
-        <div class="badge">Not Financial Advice</div>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    // Generate floating ticker chips that drift across the screen
-    const sky = document.getElementById('sky');
-    const symbols = [
-      'AAPL','TSLA','NVDA','AMZN','MSFT','SPY','QQQ','META','GOOGL','AMD',
-      'NFLX','BA','TSM','BABA','XOM','CVX','GS','JPM','MS','COIN',
-      'BTC','ETH','GLD','SLV','UVXY','VIX','SPX','IWM','TLT','GME'
-    ];
-
-    const N = 48; // number of floating labels
-    for(let i=0;i<N;i++){
-      const el = document.createElement('div');
-      el.className = 'ticker';
-      const sym = symbols[(Math.random()*symbols.length)|0];
-      const price = (100 + Math.random()*900).toFixed(2);
-      const up = Math.random() > 0.5;
-      const delta = (Math.random()*3).toFixed(2);
-
-      el.innerHTML = `<span class="dot" style="background:${up?'#16c784':'#ef4444'}"></span>${sym} <span style="opacity:.8">$${price}</span> <span style="color:${up?'#16c784':'#ef4444'}">${up?'+':'-'}${delta}%</span>`;
-
-      // Randomize path & speed
-      const top = Math.random()*100;                      // vh
-      const dur = 16 + Math.random()*26;                  // 16–42s
-      const delay = -Math.random()*dur;                   // negative to stagger starts
-      const y = (Math.random()*40 - 20) + 'px';           // slight vertical wobble
-      const alpha = 0.35 + Math.random()*0.45;            // 0.35–0.8
-      const scale = 0.9 + Math.random()*0.6;              // 0.9–1.5
-
-      el.style.top = top + 'vh';
-      el.style.setProperty('--dur', dur+'s');
-      el.style.setProperty('--delay', delay+'s');
-      el.style.setProperty('--y', y);
-      el.style.setProperty('--alpha', alpha);
-      el.style.transform += ` scale(${scale})`;
-
-      sky.appendChild(el);
-    }
-  </script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TradeGauge</title>
+  </head>
+  <body class="bg-black text-neutral-200">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>
-
