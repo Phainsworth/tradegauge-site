@@ -1,28 +1,21 @@
-// netlify/functions/finnhub-proxy.js
-export async function handler(event) {
-  try {
-    const apiKey = process.env.FINNHUB_API_KEY;
-    if (!apiKey) {
-      return { statusCode: 500, body: "Missing FINNHUB_API_KEY" };
-    }
+const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
+const { preflight, okHeaders } = require('./_shared/guard');
 
-    // Expect ?path=/calendar/economic?from=2025-08-01&to=2025-08-31 ... etc
-    const url = new URL(event.rawUrl);
-    const path = url.searchParams.get("path"); // full finnhub path + query (without base)
-    if (!path || !path.startsWith("/")) {
-      return { statusCode: 400, body: "Invalid 'path' param" };
-    }
+exports.handler = async (event) => {
+  const origin = event.headers.origin || "";
+  if (event.httpMethod === "OPTIONS") return preflight(origin);
+  const pre = preflight(origin);
+  if (pre.statusCode !== 200) return pre;
 
-    const finnhubUrl = `https://finnhub.io/api/v1${path}${path.includes("?") ? "&" : "?"}token=${apiKey}`;
-    const resp = await fetch(finnhubUrl);
-    const data = await resp.text();
+  const { path = "", ...q } = event.queryStringParameters || {};
+  if (!path) return { statusCode:400, headers: okHeaders(origin), body: JSON.stringify({ ok:false, error:"missing_path"})};
 
-    return {
-      statusCode: resp.status,
-      headers: { "content-type": resp.headers.get("content-type") || "application/json" },
-      body: data
-    };
-  } catch (err) {
-    return { statusCode: 500, body: String(err) };
-  }
-}
+  const API = "https://finnhub.io/api/v1";
+  const u = new URL(API + path);
+  for (const [k, v] of Object.entries(q)) u.searchParams.set(k, v);
+  u.searchParams.set("token", process.env.FINNHUB_KEY);
+
+  const r = await fetch(u.toString());
+  const text = await r.text();
+  return { statusCode: r.status, headers: okHeaders(origin), body: text };
+};
