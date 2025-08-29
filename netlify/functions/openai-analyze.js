@@ -1,40 +1,33 @@
-// netlify/functions/openai-analyze.js
-export async function handler(event) {
-  try {
-    if (event.httpMethod !== "POST") {
-      return { statusCode: 405, body: "Method Not Allowed" };
-    }
-    const OPENAI_KEY = process.env.OPENAI_KEY;
-    if (!OPENAI_KEY) {
-      return { statusCode: 500, body: "OPENAI_KEY missing" };
-    }
+const { preflight, okHeaders } = require('./_shared/guard');
+const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
 
-    const payload = JSON.parse(event.body || "{}"); // { messages, model?, temperature? }
-    // Minimal guard
-    if (!Array.isArray(payload.messages)) {
-      return { statusCode: 400, body: "messages[] required" };
-    }
+exports.handler = async (event) => {
+  const origin = event.headers.origin || "";
+  if (event.httpMethod === "OPTIONS") return preflight(origin);
+  const pre = preflight(origin);
+  if (pre.statusCode !== 200) return pre;
 
-    // Call OpenAI (Responses API or Chat Completions; using responses here)
-    const resp = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${OPENAI_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        input: payload.messages, // or build from your existing structure
-        temperature: payload.temperature ?? 0.2,
-      }),
-    });
-
-    const data = await resp.json();
-    return {
-      statusCode: resp.ok ? 200 : resp.status,
-      body: JSON.stringify(data),
-    };
-  } catch (err) {
-    return { statusCode: 500, body: `Server error: ${err.message}` };
+  if (event.httpMethod !== "POST") {
+    return { statusCode: 405, headers: okHeaders(origin), body: JSON.stringify({ ok:false, error:"POST_only" }) };
   }
-}
+
+  const payload = JSON.parse(event.body || "{}");
+
+  // Example OpenAI "Responses" style call; adjust to your exact use:
+  const r = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: payload.model || "gpt-4o-mini",
+      temperature: payload.temperature ?? 0.3,
+      max_tokens: payload.max_tokens ?? 800,
+      messages: payload.messages || []
+    })
+  });
+
+  const text = await r.text();
+  return { statusCode: r.status, headers: okHeaders(origin), body: text };
+};
