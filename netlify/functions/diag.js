@@ -8,6 +8,9 @@ exports.handler = async (event) => {
   };
 
   const key = process.env.POLYGON_KEY || "";
+  const first4 = key ? key.slice(0, 4) : "";
+  const last4  = key ? key.slice(-4) : "";
+
   return {
     statusCode: 200,
     headers,
@@ -15,8 +18,9 @@ exports.handler = async (event) => {
       ok: true,
       hasPolygonKey: !!key,
       polygonKeyLen: key.length,
-      // quick fingerprint so we know THIS file is deployed
-      version: "diag-2025-08-31",
+      first4,
+      last4,
+      version: "diag-2025-08-31b",
       node: process.version,
     }),
   };
