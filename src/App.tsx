@@ -2502,97 +2502,81 @@ function rankAndDedupSymbols(
 }
 
 
-// Debounced Polygon ticker search (prefix-first + exact + fuzzy, race guarded)
+// Debounced Polygon ticker search (via Netlify proxy, race guarded)
+// Replaces your multi-call block with one reliable search call to rule out query bugs
 useEffect(() => {
   const q = tickerQuery.trim().toUpperCase();
 
-
+  // clear prior timer
   if (debTimer.current) window.clearTimeout(debTimer.current);
-  if (q.length < 1) {
+
+  // if empty, clear UI and bail
+  if (!q) {
     setTickerOpts([]);
     setTickerOpen(false);
+    setTickerIdx?.(-1);
     return;
   }
 
-
+  // debounce
   debTimer.current = window.setTimeout(async () => {
     const mySeq = ++searchSeq.current;
     try {
+      // abort any in-flight search
       if (searchAbort.current) searchAbort.current.abort();
       const ctrl = new AbortController();
       searchAbort.current = ctrl;
 
+      // Build Polygon path ONCE, then encode the WHOLE thing ONCE
+      // (proxy now decodes 'path' and appends apiKey)
+      const polyPath =
+        `/v3/reference/tickers` +
+        `?market=stocks&active=true` +
+        `&search=${encodeURIComponent(q)}` +
+        `&limit=50&sort=ticker`;
 
-// 1) Prefix query: only tickers that START WITH q  (via polygon-proxy)
-const prefixPath =
-  `/v3/reference/tickers` +
-  `?market=stocks&active=true` +
-  `&ticker.gte=${encodeURIComponent(q)}` +
-  `&ticker.lte=${encodeURIComponent(q + "ZZZZZZ")}` +
-  `&sort=ticker&limit=100`;
+      const url = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(polyPath)}`;
 
-// 2) Exact ticker (fast)
-const exactPath =
-  `/v3/reference/tickers` +
-  `?ticker=${encodeURIComponent(q)}` +
-  `&market=stocks&active=true&limit=1`;
+      const r = await fetch(url, { signal: ctrl.signal });
+      if (!r.ok) throw new Error(`polygon ${r.status}`);
+      const j = await r.json();
 
-// 3) Fuzzy (fallback/extra)
-const fuzzyPath =
-  `/v3/reference/tickers` +
-  `?market=stocks&active=true&search=${encodeURIComponent(q)}` +
-  `&limit=50`;
-
-// Netlify proxy URL builder (server appends apiKey)
-/** @param {string} polygonPathWithQuery @returns {string} */
-const fnURL = (polygonPathWithQuery) =>
-  "/.netlify/functions/polygon-proxy?path=" + encodeURIComponent(polygonPathWithQuery);
-const [prefixRes, exactRes, fuzzyRes] = await Promise.allSettled([
-  fetch(fnURL(prefixPath), { signal: ctrl.signal }),
-  fetch(fnURL(exactPath),  { signal: ctrl.signal }),
-  fetch(fnURL(fuzzyPath),  { signal: ctrl.signal }),
-]);
-
-
+      // Extract raw symbols
       let raw: Array<{ symbol: string; name?: string }> = [];
-      const pushFrom = (json: any) => {
-        const arr = (json?.results || [])
-          .filter((x: any) => typeof x?.ticker === "string")
-          .map((x: any) => ({ symbol: x.ticker as string, name: x?.name as string | undefined }));
-        raw.push(...arr);
-      };
+      const arr = Array.isArray(j?.results) ? j.results : [];
+      for (const x of arr) {
+        if (x && typeof x.ticker === "string") {
+          raw.push({ symbol: x.ticker, name: typeof x.name === "string" ? x.name : undefined });
+        }
+      }
 
+      // Rank + dedupe using your existing helper
+      const ranked = typeof rankAndDedupSymbols === "function" ? rankAndDedupSymbols(raw, q) : raw;
 
-      if (prefixRes.status === "fulfilled" && prefixRes.value.ok) pushFrom(await prefixRes.value.json());
-      if (exactRes.status  === "fulfilled" && exactRes.value.ok)  pushFrom(await exactRes.value.json());
-      if (fuzzyRes.status  === "fulfilled" && fuzzyRes.value.ok)  pushFrom(await fuzzyRes.value.json());
+      // race guard
+      if (mySeq !== searchSeq.current) return;
 
-
-      // NOTE: removed the line that injected the "typed symbol" fake option.
-
-
-      const ranked = rankAndDedupSymbols(raw, q); // your existing (prefix-only) ranker
-
-
-      if (mySeq !== searchSeq.current) return; // drop stale
       setTickerOpts(ranked);
       setTickerOpen(ranked.length > 0);
       setTickerIdx(ranked.length ? 0 : -1);
-    } catch (e) {
+    } catch (e: any) {
+      if (e?.name === "AbortError") return; // ignore cancels
       if (mySeq !== searchSeq.current) return;
-      addDebug("Ticker search error", e);
+      addDebug?.("Ticker search error", e);
       setTickerOpts([]);
       setTickerOpen(false);
+      setTickerIdx?.(-1);
     }
-  }, 150) as unknown as number;
-
+  }, 200) as unknown as number;
 
   return () => {
     if (debTimer.current) window.clearTimeout(debTimer.current);
   };
 // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [tickerQuery]);
+
 // Hide/reset results while the user is typing a *different* ticker (before they pick)
+// (kept as-is from your snippet)
 useEffect(() => {
   const q = tickerQuery.trim().toUpperCase();
   const chosen = form.ticker.trim().toUpperCase();
@@ -2613,6 +2597,7 @@ useEffect(() => {
     setEarnings?.(null);
   }
 }, [tickerQuery, form.ticker, submitted]);
+
 
 
 
