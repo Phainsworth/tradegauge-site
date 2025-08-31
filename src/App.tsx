@@ -12,18 +12,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 /* =========================
    Main App (wrapped below)
    ========================= */
-   // --- Patch Notes (edit weekly) ---
-const PATCH_NOTES: { date: string; items: string[] }[] = [
-  {
-    date: "Aug 29, 2025",
-    items: [
-      "AI Advice Algorithm Tweaks",
-      "Fixed an issue related to the ticker search",
-      "Minor UI polish on cards",
-    ],
-  },
-  // Add new entries above this line (newest first)
-];
 function TradeGaugeApp() {
 const addDebug = React.useCallback((_msg?: string, _err?: any) => {}, []);
   // -----------------------------
@@ -41,18 +29,6 @@ const [form, setForm] = useState({
   open: "",     // <-- NEW: today's open for % change
 });
   const [submitted, setSubmitted] = useState(false);
-  const [showDisclaimer, setShowDisclaimer] = useState(true);
-  {/* --- Beta Disclaimer (shows before first submit) --- */}
-{!submitted && showDisclaimer && (
-  <div className="mb-4 rounded-2xl border border-yellow-500/40 bg-yellow-900/10 p-4 text-sm text-yellow-200">
-    ...
-  </div>
-)}
-
-{/* --- Input fields start below --- */}
-<div className="...">
-   ...
-</div>
   // --- 3-route advice for "What I'd do if I were you" ---
 type RouteChoice = {
   label: string;           // e.g., "Aggressive Approach"
@@ -74,15 +50,6 @@ type RoutesOut = {
 };
 
 const [routes, setRoutes] = useState<RoutesOut | null>(null);
-
-
-  // Keys from Vite env
-  const FINNHUB_KEY = (import.meta as any).env?.VITE_FINNHUB_KEY;
-  const POLY_KEY = (import.meta as any).env?.VITE_POLYGON_KEY;
-  const OPENAI_KEY = (import.meta as any).env?.VITE_OPENAI_KEY;
-  const MACRO_JSON_URL = (import.meta as any).env?.VITE_MACRO_JSON;
-
-
   // Chain UI
   const [expirations, setExpirations] = useState<string[]>([]);
   const [strikes, setStrikes] = useState<number[]>([]);
@@ -233,7 +200,7 @@ const [quote, setQuote] = useState<{bid:string; ask:string; last:string; mark:st
   // Cache chains per ticker
   const chainCache = useRef<Map<string, any[]>>(new Map());
 
-console.log("[DISC] initial", { submitted, showDisclaimer });
+
   // -----------------------------
   // HELPERS
   // -----------------------------
@@ -244,6 +211,16 @@ console.log("[DISC] initial", { submitted, showDisclaimer });
 // - If user typed cents (ends with c/¢) → divide by 100.
 // - If no decimal and you have a live mark: if value > 3× mark → divide by 100.
 // - If no mark: any integer ≥ 100 → divide by 100.
+async function finnhub(pathAndQuery: string) {
+  const res = await fetch(`/.netlify/functions/finnhub-proxy?path=${encodeURIComponent(pathAndQuery)}`);
+  if (!res.ok) throw new Error(`finnhub proxy failed: ${res.status}`);
+  return res.json();
+}
+async function poly(pathAndQuery: string) {
+  const res = await fetch(`/.netlify/functions/polygon-proxy?path=${encodeURIComponent(pathAndQuery)}`);
+  if (!res.ok) throw new Error(`polygon proxy failed: ${res.status}`);
+  return res.json();
+}
 function normalizePaid(raw: any, refMark?: number | null): number | null {
   const txt = (raw ?? "").toString().trim();
   if (!txt) return null;
@@ -1109,15 +1086,18 @@ Output strictly JSON:
 }
 
 
+// analyzeWithAI — rewritten to use Netlify Function (server-side OpenAI key)
+// Assumes you have a Netlify function at "/.netlify/functions/openai-chat" that forwards
+// { model, temperature, messages, response_format? } to OpenAI's Chat Completions API
+// and returns the raw OpenAI response shape (with .choices[0].message.content).
+// If your function name/path differs, update OPENAI_FN below.
+
 async function analyzeWithAI(opts: AnalyzeOpts = {}) {
   console.log("analyzeWithAI start");
   try {
-    if (!OPENAI_KEY) {
-      setLlmStatus("Missing VITE_OPENAI_KEY");
-      addDebug("AI skipped — missing OPENAI key");
-      return;
-    }
-    if (!form.ticker || !form.type || !form.strike || !form.expiry) return;
+    // Basic guards
+    if (!form?.ticker || !form?.type || !form?.strike || !form?.expiry) return;
+
     const consideringEntry = form.pricePaid === "" || form.pricePaid == null;
 
     setIsGenLoading(true);
@@ -1126,6 +1106,7 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
     // ---------- parse helpers ----------
     const toNumOrNull = (s: string) =>
       s && s !== "—" && isFinite(Number(s)) ? Number(s) : null;
+
     const ivPctToFloat = (s: string) => {
       if (!s || s === "—") return null;
       const z = Number(String(s).replace("%", ""));
@@ -1202,24 +1183,7 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
       breakeven_gap_pct: d.breakeven_gap_pct,
     });
 
-    // ---------- lazy-load OpenAI SDK ----------
-    let OpenAIClientCtor: any;
-    try {
-      OpenAIClientCtor = (await import("openai")).default;
-    } catch (err) {
-      console.error("Failed to load OpenAI SDK in browser:", err);
-      addDebug("Failed to load OpenAI SDK module", err);
-      setLlmStatus("AI module unavailable");
-      setIsGenLoading(false);
-      return;
-    }
-
-    const client = new OpenAIClientCtor({
-      apiKey: OPENAI_KEY,
-      dangerouslyAllowBrowser: true,
-    });
-
-    // ---------- main “buddy” call ----------
+    // ---------- prompts ----------
     const systemPrompt = makeBuddySystemPrompt();
     const userPrompt = makeBuddyUserPrompt({
       ticker: form.ticker.toUpperCase(),
@@ -1229,15 +1193,30 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
       pricePaid: form.pricePaid === "" ? null : Number(form.pricePaid),
       spot: form.spot === "" ? null : Number(form.spot),
       greeks: greeksNumbers,
-      macro_events: econEvents.slice(0, 6),
+      macro_events: (econEvents || []).slice(0, 6),
       earnings,
       derived: d,
       ownsPosition: !consideringEntry,
       dte: daysToExpiry,
     });
 
+    // ---------- Netlify OpenAI proxy helper ----------
+    const OPENAI_FN = "/.netlify/functions/openai-analyze"; // <— change if your function name differs
+    async function callOpenAIProxy(body: any) {
+      const r = await fetch(OPENAI_FN, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const t = await r.text().catch(() => "");
+        throw new Error(`OpenAI proxy ${r.status} ${t}`.trim());
+      }
+      return await r.json();
+    }
+
     async function callOpenAI(useStrictJson: boolean) {
-      return await client.chat.completions.create({
+      return await callOpenAIProxy({
         model: "gpt-4o-mini",
         temperature: 0.9,
         messages: [
@@ -1400,32 +1379,31 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
 
     // ---------- AI call: "What I'd do if I were you" (3 routes + pick) ----------
     try {
-const routesUser = makeRoutesUserPrompt({
-  finalScore,
-  type: form.type as "CALL" | "PUT",
-  strike: Number(form.strike),
-  spot: form.spot === "" ? NaN : Number(form.spot),
-  dte: daysToExpiry,
-  iv: ivPctForRoutes,
-  theta: thetaNum,
-  delta: deltaNum,
-  gamma: gammaNum,
-  pricePaid: form.pricePaid === "" ? null : Number(form.pricePaid),
-  bid: bidNow,
-  ask: askNow,
-  last: lastNow,
-  mark: markNowForRoutes,
-  pnlPct: pnlPctForRoutes,
-  breakevenGapPct,
-  earningsDays,
-  macroSoon: macroSoonStr,
-  liquidityOi,
-  spreadWide,
-});
-
+      const routesUser = makeRoutesUserPrompt({
+        finalScore,
+        type: form.type as "CALL" | "PUT",
+        strike: Number(form.strike),
+        spot: form.spot === "" ? NaN : Number(form.spot),
+        dte: daysToExpiry,
+        iv: ivPctForRoutes,
+        theta: thetaNum,
+        delta: deltaNum,
+        gamma: gammaNum,
+        pricePaid: form.pricePaid === "" ? null : Number(form.pricePaid),
+        bid: bidNow,
+        ask: askNow,
+        last: lastNow,
+        mark: markNowForRoutes,
+        pnlPct: pnlPctForRoutes,
+        breakevenGapPct,
+        earningsDays,
+        macroSoon: macroSoonStr,
+        liquidityOi,
+        spreadWide,
+      });
 
       async function callOpenAIRoutes(useStrictJson: boolean) {
-        return await client.chat.completions.create({
+        return await callOpenAIProxy({
           model: "gpt-4o-mini",
           temperature: 0.7,
           messages: [
@@ -1456,13 +1434,13 @@ const routesUser = makeRoutesUserPrompt({
       const jr = parseRoutesLoose(routesTxt);
 
       const isValid =
-  jr && jr.routes && jr.pick &&
-  jr.routes.aggressive && jr.routes.middle && jr.routes.conservative &&
-  typeof jr.routes.aggressive.action === "string" &&
-  typeof jr.routes.middle.action === "string" &&
-  typeof jr.routes.conservative.action === "string" &&
-  (jr.pick.route === "aggressive" || jr.pick.route === "middle" || jr.pick.route === "conservative") &&
-  typeof jr.pick.reason === "string"; // <- confidence no longer required
+        jr && jr.routes && jr.pick &&
+        jr.routes.aggressive && jr.routes.middle && jr.routes.conservative &&
+        typeof jr.routes.aggressive.action === "string" &&
+        typeof jr.routes.middle.action === "string" &&
+        typeof jr.routes.conservative.action === "string" &&
+        (jr.pick.route === "aggressive" || jr.pick.route === "middle" || jr.pick.route === "conservative") &&
+        typeof jr.pick.reason === "string"; // <- confidence no longer required
 
       let routesForTLDR: RoutesOut;
       if (isValid) {
@@ -1503,32 +1481,27 @@ const routesUser = makeRoutesUserPrompt({
 }
 
 
+
   // -----------------------------
   // FINNHUB: CHAIN + SPOT
   // -----------------------------
-  async function fetchOptionChain(symbol: string, opts?: { force?: boolean }) {
-    const s = symbol.trim().toUpperCase();
-    if (!FINNHUB_KEY) {
-      const err = new Error("Missing FINNHUB_KEY");
-      addDebug("fetchOptionChain aborted", err);
-      throw err;
-    }
-    if (!opts?.force && chainCache.current.has(s)) return chainCache.current.get(s)!;
-
-
-    const url = `https://finnhub.io/api/v1/stock/option-chain?symbol=${encodeURIComponent(
-      s
-    )}&token=${FINNHUB_KEY}`;
-    const r = await fetch(url);
-    if (!r.ok) {
-      addDebug(`Finnhub option-chain error ${r.status}`);
-      throw new Error(`Finnhub error ${r.status}`);
-    }
-    const json = await r.json();
-    const data = Array.isArray(json?.data) ? json.data : [];
-    chainCache.current.set(s, data);
-    return data;
+ // Option chain via Netlify proxy (no FINNHUB_KEY in browser)
+async function fetchOptionChain(symbol: string, opts?: { force?: boolean }) {
+  const s = symbol.trim().toUpperCase();
+  if (!s) {
+    const err = new Error("Missing symbol");
+    addDebug("fetchOptionChain aborted", err);
+    throw err;
   }
+  if (!opts?.force && chainCache.current.has(s)) {
+    return chainCache.current.get(s)!;
+  }
+
+  const j: any = await finnhub(`/stock/option-chain?symbol=${encodeURIComponent(s)}`);
+  const data = Array.isArray(j?.data) ? j.data : [];
+  chainCache.current.set(s, data);
+  return data;
+}
   const getExpirationRaw = (d: any) =>
     d?.expirationDate ?? d?.expiration ?? d?.expiry ?? d?.expDate ?? null;
 
@@ -1595,21 +1568,12 @@ const routesUser = makeRoutesUserPrompt({
   }
 
 
-  // Spot (Finnhub)
+ // Spot (Finnhub) — via Netlify proxy (no FINNHUB_KEY in browser)
 async function loadSpot(ticker: string, opts?: { silent?: boolean }) {
-  if (!FINNHUB_KEY || !ticker.trim()) return;
+  if (!ticker.trim()) return;
   if (!opts?.silent) setSpotLoading(true);
   try {
-    const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(
-      ticker.toUpperCase()
-    )}&token=${FINNHUB_KEY}`;
-    const r = await fetch(url, { headers: { Accept: "application/json" } });
-    if (!r.ok) {
-      if (r.status === 429) spotCooldownUntil.current = Date.now() + 60_000;
-      addDebug(`loadSpot: Finnhub error ${r.status}`);
-      throw new Error(`Finnhub error ${r.status}`);
-    }
-    const j = await r.json();
+    const j: any = await finnhub(`/quote?symbol=${encodeURIComponent(ticker.toUpperCase())}`);
 
     // Finnhub fields:
     // c = current/last, o = today's open, d = abs change, dp = % change
@@ -1626,8 +1590,14 @@ async function loadSpot(ticker: string, opts?: { silent?: boolean }) {
     } else {
       addDebug("loadSpot: no valid price in Finnhub response", j);
     }
-  } catch (e) {
-    addDebug("loadSpot error", e);
+  } catch (e: any) {
+    const msg = String(e?.message || e);
+    if (msg.includes("429")) {
+      spotCooldownUntil.current = Date.now() + 60_000;
+      addDebug("loadSpot: Finnhub rate-limited (429) — cooling down 60s");
+    } else {
+      addDebug("loadSpot error", e);
+    }
   } finally {
     if (!opts?.silent) setSpotLoading(false);
   }
@@ -1894,196 +1864,181 @@ const MACRO_OVERRIDES: EconEvent[] = [];
 
 
 
-  async function fetchEarnings(symbol: string) {
-    try {
-      if (!FINNHUB_KEY) {
-        setEarnings(null);
-        addDebug("fetchEarnings skipped — missing FINNHUB_KEY");
-        return;
-      }
-      const tkr = symbol.toUpperCase().trim();
-      const today = new Date();
-      const from = toYMD_UTC(today);
-      const to = toYMD_UTC(new Date(today.getTime() + 210 * 86_400_000));
-      const url = `https://finnhub.io/api/v1/calendar/earnings?from=${from}&to=${to}&symbol=${encodeURIComponent(
-        tkr
-      )}&token=${FINNHUB_KEY}`;
-      const r = await fetch(url);
-      if (!r.ok) throw new Error(`earnings ${r.status}`);
-      const j = await r.json();
-
-
-      const raw: any[] =
-        (Array.isArray(j?.earningsCalendar) && j.earningsCalendar) ||
-        (Array.isArray(j?.data) && j.data) ||
-        (Array.isArray(j?.events) && j.events) ||
-        [];
-
-
-      const sameTicker = (x: any) => {
-        const sym = (x?.symbol || x?.ticker || "").toString().toUpperCase();
-        return (
-          sym === tkr ||
-          sym === `${tkr}.US` ||
-          sym === `US:${tkr}` ||
-          sym.endsWith(`:${tkr}`) ||
-          sym === `${tkr}-USD`
-        );
-      };
-
-
-      const parsed = raw
-        .filter(sameTicker)
-        .map((x: any) => {
-          const dateStr = (
-            x?.date ||
-            x?.earningsDate ||
-            x?.releaseDate ||
-            x?.reportDate ||
-            ""
-          )
-            .toString()
-            .slice(0, 10);
-          const dObj = new Date(dateStr + "T00:00:00Z");
-          const hour = (x?.hour || x?.time || "").toString().toLowerCase();
-          const confirmFlag = Boolean(
-            x?.confirmed === true ||
-            x?.confirmStatus === "confirmed" ||
-            x?.status === "confirmed"
-          );
-          return {
-            date: dateStr,
-            dObj: isNaN(dObj.getTime()) ? null : dObj,
-            hour,
-            confirmed: confirmFlag,
-          };
-        })
-        .filter((e) => e.dObj && e.dObj.getTime() >= new Date(from + "T00:00:00Z").getTime())
-        .sort((a, b) => a!.dObj!.getTime() - b!.dObj!.getTime());
-
-
-      if (!parsed.length) {
-        setEarnings(null);
-        return;
-      }
-
-
-      const firstDate = parsed[0].date;
-      const sameDay = parsed.filter((p) => p.date === firstDate);
-      const next = sameDay.find((p) => p.confirmed) || sameDay[0];
-
-
-      const whenMap: Record<string, string> = {
-        bmo: "Before Open",
-        amc: "After Close",
-        "pre-market": "Pre-Market",
-        "post-market": "Post-Market",
-        pm: "Post-Market",
-        am: "Pre-Market",
-      };
-      const when = whenMap[next.hour] || (next.hour ? next.hour : undefined);
-
-
-      setEarnings({ date: next.date, when, confirmed: next.confirmed });
-    } catch (e) {
-      addDebug("fetchEarnings error", e);
-      setEarnings(null);
-    }
-  }
-
-// Always-on macro feed (independent of ticker)
-async function fetchUpcomingMacro() {
+// Earnings calendar via Netlify proxy (no FINNHUB_KEY in browser)
+async function fetchEarnings(symbol: string) {
   try {
-    const baseEvents: EconEvent[] = [];
-
-    if (FINNHUB_KEY) {
-      const from = toYMD_UTC(new Date());
-      const to = toYMD_UTC(new Date(Date.now() + 60 * 86_400_000)); // 60d window
-      const url = `https://finnhub.io/api/v1/calendar/economic?from=${from}&to=${to}&token=${FINNHUB_KEY}`;
-      const r = await fetch(url);
-      let arr: any[] = [];
-
-      if (r.ok) {
-        const j = await r.json();
-
-        // Robust array extraction
-        let raw: any[] =
-          (Array.isArray(j?.economicCalendar) && j.economicCalendar) ||
-          (Array.isArray(j?.economicCalendar?.result) && j.economicCalendar.result) ||
-          (Array.isArray(j?.economicCalendar?.data) && j.economicCalendar.data) ||
-          (Array.isArray(j?.economicCalendar?.events) && j.economicCalendar.events) ||
-          (Array.isArray(j?.result) && j.result) ||
-          (Array.isArray(j?.data) && j.data) ||
-          (Array.isArray(j?.events) && j.events) ||
-          [];
-
-        if (!raw.length && j?.economicCalendar && typeof j.economicCalendar === "object") {
-          const vals = Object.values(j.economicCalendar).filter(Array.isArray) as any[];
-          if (vals.length) raw = vals.flat();
-        }
-        arr = raw;
-      }
-
-      const keyWords = [
-        // Inflation
-        "cpi","consumer price index","core cpi","inflation",
-        "pce","core pce","personal consumption expenditures",
-        // Fed
-        "fomc","federal open market committee","federal reserve",
-        "powell","press conference","minutes","rate","interest",
-        // Labor
-        "nonfarm","payroll","jobs","unemployment","claims","jobless",
-        // ISM/PMI
-        "ism","pmi","manufacturing","services"
-      ];
-
-      const usish = (c?: string) => !c || /\b(US|United States|USA)\b/i.test(c);
-
-      for (const x of arr) {
-        const name = (x?.event || x?.title || x?.indicator || "").toString();
-        if (!name) continue;
-        const country = (x?.country || x?.region || x?.countryCode || "").toString();
-        if (!usish(country)) continue;
-
-        const date = (/\d{4}-\d{2}-\d{2}/.exec(
-          (x?.date || x?.releaseDate || x?.nextRelease || x?.eventDate || x?.datetime || "").toString()
-        )?.[0]) || "";
-        if (!date) continue;
-
-        const time = (/\b\d{2}:\d{2}\b/.exec(
-          (x?.time || x?.releaseTime || x?.datetime || "").toString()
-        )?.[0]) || "";
-
-        if (keyWords.some((k) => name.toLowerCase().includes(k))) {
-          baseEvents.push({ title: name, date, time });
-        }
-      }
+    const tkr = symbol.toUpperCase().trim();
+    if (!tkr) {
+      setEarnings(null);
+      addDebug("fetchEarnings skipped — missing symbol");
+      return;
     }
 
-    // Future-only merge
-    const todayUTC = toYMD_UTC(new Date());
-    const nowHM = new Date().toISOString().slice(11,16);
-    const isFuture = (e: EconEvent) => {
-      if (!e?.date) return false;
-      if (e.date > todayUTC) return true;
-      if (e.date < todayUTC) return false;
-      if (!e.time) return true;
-      return e.time >= nowHM;
+    const today = new Date();
+    const from = toYMD_UTC(today);
+    const to = toYMD_UTC(new Date(today.getTime() + 210 * 86_400_000)); // ~210 days out
+
+    const j: any = await finnhub(
+      `/calendar/earnings?from=${from}&to=${to}&symbol=${encodeURIComponent(tkr)}`
+    );
+
+    const raw: any[] =
+      (Array.isArray(j?.earningsCalendar) && j.earningsCalendar) ||
+      (Array.isArray(j?.data) && j.data) ||
+      (Array.isArray(j?.events) && j.events) ||
+      [];
+
+    const sameTicker = (x: any) => {
+      const sym = (x?.symbol || x?.ticker || "").toString().toUpperCase();
+      return (
+        sym === tkr ||
+        sym === `${tkr}.US` ||
+        sym === `US:${tkr}` ||
+        sym.endsWith(`:${tkr}`) ||
+        sym === `${tkr}-USD`
+      );
     };
 
-    const extraA = MACRO_OVERRIDES.filter(isFuture);
-    const extraB = await fetchExternalMacroJSON();
+    const parsed = raw
+      .filter(sameTicker)
+      .map((x: any) => {
+        const dateStr = (
+          x?.date || x?.earningsDate || x?.releaseDate || x?.reportDate || ""
+        )
+          .toString()
+          .slice(0, 10);
+        const dObj = new Date(dateStr + "T00:00:00Z");
+        const hour = (x?.hour || x?.time || "").toString().toLowerCase();
+        const confirmFlag = Boolean(
+          x?.confirmed === true ||
+            x?.confirmStatus === "confirmed" ||
+            x?.status === "confirmed"
+        );
+        return {
+          date: dateStr,
+          dObj: isNaN(dObj.getTime()) ? null : dObj,
+          hour,
+          confirmed: confirmFlag,
+        };
+      })
+      .filter((e) => e.dObj && e.dObj.getTime() >= new Date(from + "T00:00:00Z").getTime())
+      .sort((a, b) => a!.dObj!.getTime() - b!.dObj!.getTime());
 
-    const merged = uniqueMacro([...baseEvents, ...extraA, ...extraB])
-      .filter(isFuture)
-      .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))
-      .slice(0, 10);
+    if (!parsed.length) {
+      setEarnings(null);
+      return;
+    }
 
-    setEconEvents(merged);
+    const firstDate = parsed[0].date;
+    const sameDay = parsed.filter((p) => p.date === firstDate);
+    const next = sameDay.find((p) => p.confirmed) || sameDay[0];
 
+    const whenMap: Record<string, string> = {
+      bmo: "Before Open",
+      amc: "After Close",
+      "pre-market": "Pre-Market",
+      "post-market": "Post-Market",
+      pm: "Post-Market",
+      am: "Pre-Market",
+    };
+    const when = whenMap[next.hour] || (next.hour ? next.hour : undefined);
+
+    setEarnings({ date: next.date, when, confirmed: next.confirmed });
+  } catch (e) {
+    addDebug("fetchEarnings error", e);
+    setEarnings(null);
+  }
+}
+// Always-on macro feed (independent of ticker)
+// Always-on macro feed (independent of ticker) — via Netlify proxy
+async function fetchUpcomingMacro() {
+  try {
+    // Collect normalized events here
+    const baseEvents: any[] = [];
+
+    // 60d window (UTC)
+    const from = toYMD_UTC(new Date());
+    const to = toYMD_UTC(new Date(Date.now() + 60 * 86_400_000));
+
+    // Call Finnhub through the proxy (no FINNHUB_KEY in browser)
+    const j: any = await finnhub(`/calendar/economic?from=${from}&to=${to}`);
+
+    // Robust array extraction across possible shapes
+    let raw: any[] =
+      (Array.isArray(j?.economicCalendar) && j.economicCalendar) ||
+      (Array.isArray(j?.economicCalendar?.result) && j.economicCalendar.result) ||
+      (Array.isArray(j?.economicCalendar?.data) && j.economicCalendar.data) ||
+      (Array.isArray(j?.economicCalendar?.events) && j.economicCalendar.events) ||
+      (Array.isArray(j?.result) && j.result) ||
+      (Array.isArray(j?.data) && j.data) ||
+      (Array.isArray(j?.events) && j.events) ||
+      [];
+
+    // If it's an object of arrays, flatten values
+    if (!raw.length && j?.economicCalendar && typeof j.economicCalendar === "object") {
+      const vals = Object.values(j.economicCalendar).filter(Array.isArray) as any[];
+      if (vals.length) raw = vals.flat();
+    }
+
+    // Normalize into a consistent shape for your UI
+    const norm = (raw as any[]).map((x: any) => {
+      const dateStr =
+        (x?.date || x?.releaseDate || x?.reportDate || x?.day || "")
+          .toString()
+          .slice(0, 10);
+
+      // Some feeds include a time field; keep it if present
+      const timeStr = (x?.time || x?.hour || "").toString();
+      const eventName = (x?.event || x?.title || x?.indicator || "").toString();
+
+      // Importance / impact normalization
+      const impactRaw = (x?.importance || x?.impact || "").toString().toLowerCase();
+      const impact =
+        impactRaw === "high" || impactRaw === "medium" || impactRaw === "low"
+          ? impactRaw
+          : impactRaw.includes("high")
+          ? "high"
+          : impactRaw.includes("med")
+          ? "medium"
+          : impactRaw.includes("low")
+          ? "low"
+          : undefined;
+
+      const country = (x?.country || x?.region || "").toString().toUpperCase();
+
+      // Timestamp for sorting (assume midnight UTC if no time)
+      const ts = Date.parse(dateStr ? `${dateStr}T00:00:00Z` : "");
+
+      return {
+        key: `${dateStr}|${eventName}`,
+        date: dateStr || undefined,
+        time: timeStr || undefined,
+        event: eventName || "(Unnamed event)",
+        impact,
+        country,
+        ts: Number.isFinite(ts) ? ts : undefined,
+      };
+    });
+
+    // Filter obvious junk, sort by (date desc = soonest first), then by impact
+    const impactRank: Record<string, number> = { high: 3, medium: 2, low: 1 };
+    const cleaned = norm
+      .filter((e) => e.date && e.event)
+      .sort((a, b) => {
+        const t = (a.ts || 0) - (b.ts || 0);
+        if (t !== 0) return t;
+        const ia = impactRank[a.impact as string] || 0;
+        const ib = impactRank[b.impact as string] || 0;
+        return ib - ia; // higher impact first if same day
+      });
+
+    // Optional: keep top N for UI brevity
+    for (const ev of cleaned.slice(0, 50)) baseEvents.push(ev);
+
+    setEconEvents(baseEvents);
   } catch (e) {
     addDebug("fetchUpcomingMacro error", e);
-    setEconEvents(uniqueMacro(MACRO_OVERRIDES));
+    setEconEvents([]);
   }
 }
 
@@ -2091,53 +2046,49 @@ async function fetchUpcomingMacro() {
     const tkr = symbol.toUpperCase().trim();
 
 
-    // Headlines: Polygon → Finnhub fallback, then impact sort
-    try {
-      let list: Headline[] = [];
-      if (POLY_KEY) {
-        const url = `https://api.polygon.io/v2/reference/news?ticker=${encodeURIComponent(
-          tkr
-        )}&limit=30&apiKey=${POLY_KEY}`;
-        const r = await fetch(url, { headers: { Accept: "application/json" } });
-        if (r.ok) {
-          const j = await r.json();
-          const arr = Array.isArray(j?.results) ? j.results : [];
-          list = arr
-            .map((n: any) => ({
-              title: n?.title ?? "",
-              source: n?.publisher?.name ?? n?.publisher ?? "",
-              url: n?.article_url ?? n?.url ?? "",
-              ts: n?.published_utc ? Date.parse(n.published_utc) : undefined,
-            }))
-            .filter((h) => h.title);
-        }
-      }
-      if (!list.length && FINNHUB_KEY) {
-        const from = toYMD_UTC(new Date(Date.now() - 5 * 86_400_000));
-        const to = toYMD_UTC(new Date());
-        const url = `https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(
-          tkr
-        )}&from=${from}&to=${to}&token=${FINNHUB_KEY}`;
-        const r = await fetch(url);
-        if (r.ok) {
-          const arr = await r.json();
-          list = (Array.isArray(arr) ? arr : [])
-            .map((n: any) => ({
-              title: n?.headline ?? n?.title ?? "",
-              source: n?.source ?? "",
-              url: n?.url ?? "",
-              ts: n?.datetime ? n.datetime * 1000 : undefined,
-            }))
-            .filter((h) => h.title);
-        }
-      }
-      const scored = list.map((h) => ({ h, s: scoreHeadline(h, tkr) }));
-      scored.sort((a, b) => b.s - a.s || (b.h.ts || 0) - (a.h.ts || 0));
-      setHeadlines(scored.map((x) => x.h).slice(0, 10));
-    } catch (e) {
-      addDebug("fetchNews (headlines) error", e);
-      setHeadlines([]);
-    }
+// Headlines: Polygon → Finnhub fallback, then impact sort (via Netlify proxies)
+try {
+  let list: Headline[] = [];
+
+  // 1) Polygon via proxy
+  try {
+    const j = await poly(`/v2/reference/news?ticker=${encodeURIComponent(tkr)}&limit=30`);
+    const arr = Array.isArray((j as any)?.results) ? (j as any).results : [];
+    list = arr
+      .map((n: any) => ({
+        title: n?.title ?? "",
+        source: n?.publisher?.name ?? n?.publisher ?? "",
+        url: n?.article_url ?? n?.url ?? "",
+        ts: n?.published_utc ? Date.parse(n.published_utc) : undefined,
+      }))
+      .filter((h) => h.title);
+  } catch (err) {
+    addDebug("polygon news via proxy failed", err);
+  }
+
+  // 2) Finnhub fallback via proxy
+  if (!list.length) {
+    const from = toYMD_UTC(new Date(Date.now() - 5 * 86_400_000));
+    const to = toYMD_UTC(new Date());
+    const j2 = await finnhub(`/company-news?symbol=${encodeURIComponent(tkr)}&from=${from}&to=${to}`);
+    const arr2 = Array.isArray(j2) ? j2 : [];
+    list = arr2
+      .map((n: any) => ({
+        title: n?.headline ?? n?.title ?? "",
+        source: n?.source ?? "",
+        url: n?.url ?? "",
+        ts: n?.datetime ? n.datetime * 1000 : undefined,
+      }))
+      .filter((h) => h.title);
+  }
+
+  const scored = list.map((h) => ({ h, s: scoreHeadline(h, tkr) }));
+  scored.sort((a, b) => b.s - a.s || (b.h.ts || 0) - (a.h.ts || 0));
+  setHeadlines(scored.map((x) => x.h).slice(0, 10));
+} catch (e) {
+  addDebug("fetchNews (headlines) error", e);
+  setHeadlines([]);
+}
 
 
     // Macro events: Finnhub economic calendar + overrides + optional external JSON
@@ -2369,7 +2320,6 @@ useEffect(() => {
   async function handleSubmit() {
     if (!form.ticker || !form.type || !form.expiry || !form.strike) return;
     setSubmitted(true);
-    setShowDisclaimer(false);
     setOverlayOpen(true);
 
 
@@ -2554,7 +2504,6 @@ function rankAndDedupSymbols(
 
 // Debounced Polygon ticker search (prefix-first + exact + fuzzy, race guarded)
 useEffect(() => {
-  if (!POLY_KEY) return;
   const q = tickerQuery.trim().toUpperCase();
 
 
@@ -2574,34 +2523,35 @@ useEffect(() => {
       searchAbort.current = ctrl;
 
 
-      // 1) Prefix query: only tickers that START WITH q
-      const prefixUrl =
-        `https://api.polygon.io/v3/reference/tickers` +
-        `?market=stocks&active=true` +
-        `&ticker.gte=${encodeURIComponent(q)}` +
-        `&ticker.lte=${encodeURIComponent(q + "ZZZZZZ")}` +
-        `&sort=ticker&limit=100&apiKey=${POLY_KEY}`;
+// 1) Prefix query: only tickers that START WITH q  (via polygon-proxy)
+const prefixPath =
+  `/v3/reference/tickers` +
+  `?market=stocks&active=true` +
+  `&ticker.gte=${encodeURIComponent(q)}` +
+  `&ticker.lte=${encodeURIComponent(q + "ZZZZZZ")}` +
+  `&sort=ticker&limit=100`;
 
+// 2) Exact ticker (fast)
+const exactPath =
+  `/v3/reference/tickers` +
+  `?ticker=${encodeURIComponent(q)}` +
+  `&market=stocks&active=true&limit=1`;
 
-      // 2) Exact ticker (fast)
-      const exactUrl =
-        `https://api.polygon.io/v3/reference/tickers` +
-        `?ticker=${encodeURIComponent(q)}` +
-        `&market=stocks&active=true&limit=1&apiKey=${POLY_KEY}`;
+// 3) Fuzzy (fallback/extra)
+const fuzzyPath =
+  `/v3/reference/tickers` +
+  `?market=stocks&active=true&search=${encodeURIComponent(q)}` +
+  `&limit=50`;
 
-
-      // 3) Fuzzy (fallback/extra)
-      const fuzzyUrl =
-        `https://api.polygon.io/v3/reference/tickers` +
-        `?market=stocks&active=true&search=${encodeURIComponent(q)}` +
-        `&limit=50&apiKey=${POLY_KEY}`;
-
-
-      const [prefixRes, exactRes, fuzzyRes] = await Promise.allSettled([
-        fetch(prefixUrl, { signal: ctrl.signal }),
-        fetch(exactUrl,  { signal: ctrl.signal }),
-        fetch(fuzzyUrl,  { signal: ctrl.signal }),
-      ]);
+// Netlify proxy URL builder (server appends apiKey)
+/** @param {string} polygonPathWithQuery @returns {string} */
+const fnURL = (polygonPathWithQuery) =>
+  "/.netlify/functions/polygon-proxy?path=" + encodeURIComponent(polygonPathWithQuery);
+const [prefixRes, exactRes, fuzzyRes] = await Promise.allSettled([
+  fetch(fnURL(prefixPath), { signal: ctrl.signal }),
+  fetch(fnURL(exactPath),  { signal: ctrl.signal }),
+  fetch(fnURL(fuzzyPath),  { signal: ctrl.signal }),
+]);
 
 
       let raw: Array<{ symbol: string; name?: string }> = [];
@@ -2641,7 +2591,7 @@ useEffect(() => {
     if (debTimer.current) window.clearTimeout(debTimer.current);
   };
 // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [tickerQuery, POLY_KEY]);
+}, [tickerQuery]);
 // Hide/reset results while the user is typing a *different* ticker (before they pick)
 useEffect(() => {
   const q = tickerQuery.trim().toUpperCase();
@@ -3679,29 +3629,8 @@ function toneForROI(roi?: number) {
 
 
 <div className="text-center text-neutral-600 text-xs pb-10 relative z-10">
-  v1.08 · Not financial advice · Powered By AI · Data you enter is not saved
+  v1.05 · Not financial advice · Powered By AI · Data you enter is not saved
 </div>
-{!submitted && showDisclaimer && (
-  <div className="relative z-[60] isolate mt-3 max-w-2xl mx-auto text-center text-xs text-neutral-500 pointer-events-auto">
-    <p>
-      <strong>Beta Notice:</strong> TradeGauge is in open beta. Features may be incomplete or broken. Your feedback is greatly appreciated!
-      Updates are pushed weekly — Please be patient and refresh if something looks off or feels broken!
-    </p>
-
-    {PATCH_NOTES.length > 0 && (
-      <details className="mt-1">
-        <summary className="cursor-pointer select-none text-neutral-500 hover:text-neutral-400 transition">
-          Patch notes — latest update {PATCH_NOTES[0].date}
-        </summary>
-        <ul className="mt-1 list-disc space-y-0.5 pl-5 text-left">
-          {PATCH_NOTES[0].items.map((it, i) => (
-            <li key={i}>{it}</li>
-          ))}
-        </ul>
-      </details>
-    )}
-  </div>
-)}
 
 {/* Floating “Key” legend — left side */}
 {submitted && !overlayOpen && (
