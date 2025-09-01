@@ -10,7 +10,12 @@ exports.handler = async (event) => {
   const qs = event.queryStringParameters || {};
   const rawPath = qs.path ? decodeURIComponent(qs.path) : "";
 
-  const token = (process.env.FINNHUB_KEY || process.env.FINNHUB_TOKEN || "").trim();
+  const token = (
+  process.env.FINNHUB_KEY ||
+  process.env.FINNHUB_TOKEN ||
+  process.env.FINNHUB_API_KEY ||
+  ""
+).trim();
   const hasKey = token.length > 0;
 
   // Safe echo for runtime verification (no token leaked)
