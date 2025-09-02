@@ -4255,7 +4255,26 @@ function TickerAutocomplete({
   onPick: (symbol: string) => void;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
+// De-dupe rapid commits (keydown + blur)
+const lastCommitAtRef = useRef(0);
 
+/** Commit the typed value or the highlighted option.
+ *  Works whether the menu is open or closed. */
+function commitTypedTicker(reason: "enter" | "tab" | "blur" | "manual") {
+  const now = Date.now();
+  if (now - lastCommitAtRef.current < 150) return; // guard against double fire
+  lastCommitAtRef.current = now;
+
+  const typed = (query || "").trim().toUpperCase();
+  if (!typed) return;
+
+  // Prefer the highlighted option if the list is open; otherwise fallback to first result; else use the typed text.
+  const picked =
+    (open && options.length ? (options[activeIdx] || options[0])?.symbol : undefined) ||
+    typed;
+
+  onPick(picked);
+}
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -4280,22 +4299,27 @@ function TickerAutocomplete({
     setOpen(true);
   }}
   onFocus={() => setOpen(options.length > 0)}
-  onKeyDown={(e) => {
-    if (!open) return;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setActiveIdx((i) => Math.min(i + 1, options.length - 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setActiveIdx((i) => Math.max(i - 1, 0));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      const pick = options[activeIdx] || options[0];
-      if (pick) onPick(pick.symbol);
-    } else if (e.key === "Escape") {
-      setOpen(false);
-    }
-  }}
+onKeyDown={(e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    commitTypedTicker("enter");         // commits highlighted or typed value
+  } else if (e.key === "Tab") {
+    // commit before focus leaves (don’t preventDefault so tab still works)
+    commitTypedTicker("tab");
+  } else if (e.key === "ArrowDown") {
+    e.preventDefault();
+    // ensure menu is open so highlight makes sense
+    setOpen(true);
+    setActiveIdx((i) => Math.min(((i ?? -1) + 1), Math.max(options.length - 1, 0)));
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    setOpen(true);
+    setActiveIdx((i) => Math.max(((i ?? options.length) - 1), 0));
+  } else if (e.key === "Escape") {
+    setOpen(false);
+  }
+}}
+   onBlur={() => commitTypedTicker("blur")}
   placeholder="TSLA"
   aria-label={label}
 />
@@ -4309,10 +4333,11 @@ function TickerAutocomplete({
                   i === activeIdx ? "bg-neutral-800" : "hover:bg-neutral-850"
                 }`}
                 onMouseEnter={() => setActiveIdx(i)}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  onPick(o.symbol);
-                }}
+onMouseDown={(e) => {
+  e.preventDefault();         // commit before the input blurs
+  setOpen(false);             // close the menu immediately
+  onPick(o.symbol);           // hand the selection to parent
+}}
                 title={o.name || o.symbol}
               >
                 <span className="font-medium">{o.symbol}</span>
