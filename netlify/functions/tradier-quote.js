@@ -56,10 +56,9 @@ export async function handler(event) {
     };
   }
 
-  // --- call Tradier
-  const url = `${BASE}/markets/options/quotes?symbol=${encodeURIComponent(
-    symbol
-  )}${wantGreeks ? "&greeks=true" : ""}`;
+const url = `${BASE}/markets/options/quotes?symbols=${encodeURIComponent(
+  symbol
+)}${wantGreeks ? "&greeks=true" : ""}`;
 
   const r = await fetch(url, {
     method: "GET",
