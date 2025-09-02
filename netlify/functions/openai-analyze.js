@@ -1,7 +1,7 @@
 const { preflight, okHeaders } = require('./_shared/guard');
 const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
 
-exports.handler = async (event) => {
+export async function handler(event, context) {
   const origin = event.headers.origin || "";
   if (event.httpMethod === "OPTIONS") return preflight(origin);
   const pre = preflight(origin);
