@@ -2502,8 +2502,7 @@ function rankAndDedupSymbols(
 }
 
 
-// Debounced Polygon ticker search (via Netlify proxy, race guarded)
-// Replaces your multi-call block with one reliable search call to rule out query bugs
+// Debounced Polygon ticker search (exact + prefix + fuzzy, race guarded, 1-char friendly)
 useEffect(() => {
   const q = tickerQuery.trim().toUpperCase();
 
@@ -2518,7 +2517,6 @@ useEffect(() => {
     return;
   }
 
-  // debounce
   debTimer.current = window.setTimeout(async () => {
     const mySeq = ++searchSeq.current;
     try {
@@ -2527,53 +2525,83 @@ useEffect(() => {
       const ctrl = new AbortController();
       searchAbort.current = ctrl;
 
-      // Build Polygon path ONCE, then encode the WHOLE thing ONCE
-      // (proxy now decodes 'path' and appends apiKey)
-      const polyPath =
+      // --- Build 3 Polygon paths ---
+      // 1) Exact ticker — super fast
+      const exactPath =
+        `/v3/reference/tickers` +
+        `?ticker=${encodeURIComponent(q)}` +
+        `&market=stocks&active=true&limit=1`;
+
+      // 2) Prefix range — great for 1-letter queries
+      const prefixPath =
         `/v3/reference/tickers` +
         `?market=stocks&active=true` +
-        `&search=${encodeURIComponent(q)}` +
-        `&limit=50&sort=ticker`;
+        `&ticker.gte=${encodeURIComponent(q)}` +
+        `&ticker.lte=${encodeURIComponent(q + "ZZZZZZ")}` +
+        `&sort=ticker&order=asc&limit=100`;
 
-      const url = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(polyPath)}`;
+      // 3) Fuzzy — only if 2+ chars
+      const fuzzyPath = q.length >= 2
+        ? `/v3/reference/tickers?market=stocks&active=true&search=${encodeURIComponent(q)}&limit=50`
+        : null;
 
-      const r = await fetch(url, { signal: ctrl.signal });
-      if (!r.ok) throw new Error(`polygon ${r.status}`);
-      const j = await r.json();
+      const fnURL = (p: string) => `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(p)}`;
 
-      // Extract raw symbols
+      const promises: Promise<Response>[] = [
+        fetch(fnURL(exactPath),  { signal: ctrl.signal }),
+        fetch(fnURL(prefixPath), { signal: ctrl.signal }),
+      ];
+      if (fuzzyPath) promises.push(fetch(fnURL(fuzzyPath), { signal: ctrl.signal }));
+
+      const settled = await Promise.allSettled(promises);
+
       let raw: Array<{ symbol: string; name?: string }> = [];
-      const arr = Array.isArray(j?.results) ? j.results : [];
-      for (const x of arr) {
-        if (x && typeof x.ticker === "string") {
-          raw.push({ symbol: x.ticker, name: typeof x.name === "string" ? x.name : undefined });
+      const pushFrom = async (s: PromiseSettledResult<Response> | undefined) => {
+        if (!s || s.status !== "fulfilled") return;
+        const r = s.value;
+        if (!r.ok) return;
+        const j: any = await r.json();
+        const arr = Array.isArray(j?.results) ? j.results : [];
+        for (const x of arr) {
+          if (x && typeof x.ticker === "string") {
+            raw.push({ symbol: x.ticker, name: typeof x.name === "string" ? x.name : undefined });
+          }
         }
-      }
+      };
 
-      // Rank + dedupe using your existing helper
-      const ranked = typeof rankAndDedupSymbols === "function" ? rankAndDedupSymbols(raw, q) : raw;
+      await Promise.all([pushFrom(settled[0]), pushFrom(settled[1]), pushFrom(settled[2])]);
+
+      // simple dedupe if your ranker isn’t present
+      const dedup = Array.from(new Map(raw.map(o => [o.symbol, o])).values());
+      const ranked = typeof rankAndDedupSymbols === "function" ? rankAndDedupSymbols(dedup, q) : dedup;
 
       // race guard
       if (mySeq !== searchSeq.current) return;
 
-      setTickerOpts(ranked);
-      setTickerOpen(ranked.length > 0);
-      setTickerIdx(ranked.length ? 0 : -1);
+const opts = ranked.map(o => ({
+  value: o.symbol,
+  symbol: o.symbol,
+  name: o.name,
+  label: o.name ? `${o.symbol} — ${o.name}` : o.symbol,
+}));
+
+      setTickerOpts(opts);
+      setTickerOpen(opts.length > 0);
+      setTickerIdx(opts.length ? 0 : -1);
     } catch (e: any) {
-      if (e?.name === "AbortError") return; // ignore cancels
+      if (e?.name === "AbortError") return;
       if (mySeq !== searchSeq.current) return;
-      addDebug?.("Ticker search error", e);
       setTickerOpts([]);
       setTickerOpen(false);
       setTickerIdx?.(-1);
     }
-  }, 200) as unknown as number;
+  }, 150) as unknown as number;
 
   return () => {
     if (debTimer.current) window.clearTimeout(debTimer.current);
   };
-// eslint-disable-next-line react-hooks/exhaustive-deps
 }, [tickerQuery]);
+
 
 // Hide/reset results while the user is typing a *different* ticker (before they pick)
 // (kept as-is from your snippet)
@@ -4258,8 +4286,6 @@ function TickerAutocomplete({
 // De-dupe rapid commits (keydown + blur)
 const lastCommitAtRef = useRef(0);
 
-/** Commit the typed value or the highlighted option.
- *  Works whether the menu is open or closed. */
 function commitTypedTicker(reason: "enter" | "tab" | "blur" | "manual") {
   const now = Date.now();
   if (now - lastCommitAtRef.current < 150) return; // guard against double fire
@@ -4268,7 +4294,6 @@ function commitTypedTicker(reason: "enter" | "tab" | "blur" | "manual") {
   const typed = (query || "").trim().toUpperCase();
   if (!typed) return;
 
-  // Prefer the highlighted option if the list is open; otherwise fallback to first result; else use the typed text.
   const picked =
     (open && options.length ? (options[activeIdx] || options[0])?.symbol : undefined) ||
     typed;
