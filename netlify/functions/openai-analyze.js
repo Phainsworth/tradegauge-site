@@ -18,13 +18,14 @@ export async function handler(event, context) {
     };
   }
 
-  // Ensure key is present at Functions runtime
-  if (!process.env.OPENAI_API_KEY) {
-    console.error("[OPENAI] Missing OPENAI_API_KEY in Functions runtime");
+  // Accept either OPENAI_API_KEY or OPENAI_KEY
+  const OPENAI_KEY = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY;
+  if (!OPENAI_KEY) {
+    console.error("[OPENAI] Missing OPENAI_API_KEY/OPENAI_KEY in Functions runtime");
     return {
       statusCode: 500,
       headers: okHeaders(origin),
-      body: JSON.stringify({ ok: false, error: "missing_OPENAI_API_KEY_runtime" }),
+      body: JSON.stringify({ ok: false, error: "missing_OPENAI_KEY_runtime" }),
     };
   }
 
@@ -46,7 +47,7 @@ export async function handler(event, context) {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      authorization: `Bearer ${OPENAI_KEY}`,
     },
     body: JSON.stringify({
       model: payload.model || "gpt-4o-mini",
