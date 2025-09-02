@@ -1,9 +1,11 @@
-import * as guard from "./_shared/guard.js";
-const { preflight, okHeaders } = guard;
+import guardMod from "./_shared/guard.js";
+const { preflight, okHeaders } = (guardMod?.default ?? guardMod);
 
-// Netlify's Node has global fetch; no node-fetch import needed
+// Netlify's Node has global fetch
 export async function handler(event, context) {
   const origin = event.headers.origin || "";
+
+  // CORS + preflight
   if (event.httpMethod === "OPTIONS") return preflight(origin);
   const pre = preflight(origin);
   if (pre.statusCode !== 200) return pre;
@@ -16,8 +18,30 @@ export async function handler(event, context) {
     };
   }
 
-  const payload = JSON.parse(event.body || "{}");
+  // Ensure key is present at Functions runtime
+  if (!process.env.OPENAI_API_KEY) {
+    console.error("[OPENAI] Missing OPENAI_API_KEY in Functions runtime");
+    return {
+      statusCode: 500,
+      headers: okHeaders(origin),
+      body: JSON.stringify({ ok: false, error: "missing_OPENAI_API_KEY_runtime" }),
+    };
+  }
 
+  // Parse body safely
+  let payload = {};
+  try {
+    payload = JSON.parse(event.body || "{}");
+  } catch (e) {
+    console.error("[OPENAI] Bad JSON body:", e?.message);
+    return {
+      statusCode: 400,
+      headers: okHeaders(origin),
+      body: JSON.stringify({ ok: false, error: "bad_json" }),
+    };
+  }
+
+  // Call OpenAI
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -33,5 +57,8 @@ export async function handler(event, context) {
   });
 
   const text = await r.text();
+  if (!r.ok) {
+    console.error("[OPENAI]", r.status, (text || "").slice(0, 400));
+  }
   return { statusCode: r.status, headers: okHeaders(origin), body: text };
 }
