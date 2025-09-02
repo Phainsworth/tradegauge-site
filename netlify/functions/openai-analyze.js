@@ -1,6 +1,7 @@
-import { preflight, okHeaders } from "./_shared/guard.js"; // note the .js
-// no node-fetch needed; Netlify's Node runtime has global fetch
+import * as guard from "./_shared/guard.js";
+const { preflight, okHeaders } = guard;
 
+// Netlify's Node has global fetch; no node-fetch import needed
 export async function handler(event, context) {
   const origin = event.headers.origin || "";
   if (event.httpMethod === "OPTIONS") return preflight(origin);
