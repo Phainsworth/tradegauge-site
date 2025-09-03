@@ -56,7 +56,7 @@ export async function handler(event) {
     };
   }
 
-const url = `${BASE}/markets/options/quotes?symbols=${encodeURIComponent(
+const url = `${BASE}/markets/quotes?symbols=${encodeURIComponent(
   symbol
 )}${wantGreeks ? "&greeks=true" : ""}`;
 
