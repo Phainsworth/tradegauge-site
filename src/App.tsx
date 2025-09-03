@@ -2870,13 +2870,12 @@ function renderTLDR() {
         </div>
       </div>
 {submitted && (
-  <div className="max-w-5xl mx-auto px-4 -mt-2 mb-4">
+  <div className="relative z-[60] max-w-5xl mx-auto px-4 -mt-2 mb-4">
     <button
       onClick={resetToHome}
-      className="inline-flex items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-900/70 px-4 py-2 text-sm hover:bg-neutral-800 active:scale-[0.99] transition"
+      className="inline-flex items-center gap-2 rounded-xl border border-neutral-800 bg-amber-400 text-black font-medium px-4 py-2 text-sm hover:opacity-90 active:scale-[0.99] transition"
       title="Clear and start a fresh check"
     >
-      {/* clock/refresh-ish icon */}
       <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
           d="M12 6v6l4 2m5-2a9 9 0 11-18 0 9 9 0 0118 0z" />
