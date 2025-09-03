@@ -375,6 +375,50 @@ function probITM({
   const p = isCall ? callPOP : putPOP;
   return Math.round(p * 100); // %
 }
+   // === Reset to starting view ===
+function resetToHome() {
+  // Return to the input view
+  setSubmitted(false);
+
+  // Restore form to its initial blank state
+  setForm({
+    ticker: "",
+    type: "",
+    strike: "",
+    expiry: "",
+    pricePaid: "",
+    spot: "",
+    open: "",
+  });
+
+  // Clear chain UI and routes/results
+  setExpirations([]);
+  setStrikes([]);
+  setRoutes(null);
+
+  // Reset live quote display
+  setQuote({ bid: "—", ask: "—", last: "—", mark: "—", src: "" });
+
+  // Reset news count selector to default (3)
+  setNewsCount(3);
+
+  // Clear ticker autocomplete UI
+  setTickerQuery("");
+  setTickerOpen(false);
+  setTickerOpts([]);
+  setTickerIdx(-1);
+
+  // Hide the left legend if open
+  setKeyOpen(false);
+
+  // Clear analysis panels (greeks, headlines, econ, earnings, statuses)
+  softResetForNewInput();
+  setIsGenLoading(false);
+  setLlmStatus("");
+
+  // Scroll to the top
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
 
 function chipTone(kind: "warning" | "danger" | "info" | "good") {
   switch (kind) {
