@@ -119,10 +119,17 @@ const url = `${BASE}/markets/quotes?symbols=${encodeURIComponent(
     ask: Number.isFinite(a) ? a : null,
     last: Number.isFinite(l) ? l : null,
     mark,
-    greeks,
+    // ---- TOP-LEVEL GREEKS (flattened so UI can read j?.delta etc.)
+    delta: Number.isFinite(greeks?.delta) ? greeks.delta : null,
+    gamma: Number.isFinite(greeks?.gamma) ? greeks.gamma : null,
+    theta: Number.isFinite(greeks?.theta) ? greeks.theta : null,
+    vega:  Number.isFinite(greeks?.vega)  ? greeks.vega  : null,
+    // IV + OI (already expected by UI)
     iv,
     openInterest,
-    raw: quote, // helpful for debugging in console
+    // keep nested raw for debugging
+    greeks,
+    raw: quote
   };
 
   return { statusCode: 200, headers: okHeaders(origin), body: JSON.stringify(body) };
