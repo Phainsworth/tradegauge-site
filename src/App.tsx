@@ -3088,31 +3088,6 @@ function renderTLDR() {
                   {form.ticker.toUpperCase()} {form.type} {fmtStrike(parsed.strike)} •{" "}
                   {displayMDY(form.expiry)}
                 </div>
-                 {plan && (
-  <div className="grid gap-4 md:grid-cols-3 mb-4">
-    {/* What I like */}
-    <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/70 border border-neutral-800">
-      <div className="text-sm font-semibold text-neutral-200 mb-2">What I like about this contract</div>
-      <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
-        {plan.likes.map((s, i) => <li key={i}>{s}</li>)}
-      </ul>
-    </div>
-
-    {/* Watch-outs */}
-    <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/70 border border-neutral-800">
-      <div className="text-sm font-semibold text-neutral-200 mb-2">What to watch out for</div>
-      <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
-        {plan.watchouts.map((s, i) => <li key={i}>{s}</li>)}
-      </ul>
-    </div>
-
-    {/* What I’d do */}
-    <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/70 border border-neutral-800">
-      <div className="text-sm font-semibold text-neutral-200 mb-2">What I’d do (middle-risk, no prices)</div>
-      <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-line">{plan.plan}</p>
-    </div>
-  </div>
-)}
 <div className="text-neutral-400 text-sm mt-1">
   <span className="mr-1">Spot</span>
   <span className="text-neutral-100 font-medium">
@@ -3326,6 +3301,31 @@ function renderTLDR() {
   )}
 </div>
    )}
+{plan && (
+  <div className="grid gap-4 md:grid-cols-3 mb-4">
+    {/* What I like */}
+    <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/70 border border-neutral-800">
+      <div className="text-sm font-semibold text-neutral-200 mb-2">What I like about this contract</div>
+      <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
+        {plan.likes.map((s, i) => <li key={i}>{s}</li>)}
+      </ul>
+    </div>
+
+    {/* Watch-outs */}
+    <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/70 border border-neutral-800">
+      <div className="text-sm font-semibold text-neutral-200 mb-2">What to watch out for</div>
+      <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
+        {plan.watchouts.map((s, i) => <li key={i}>{s}</li>)}
+      </ul>
+    </div>
+
+    {/* What I’d do */}
+    <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/70 border border-neutral-800">
+      <div className="text-sm font-semibold text-neutral-200 mb-2">What I’d do (middle-risk, no prices)</div>
+      <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-line">{plan.plan}</p>
+    </div>
+  </div>
+)}
 
 {/* Save & Share */}
 <div className="flex flex-wrap gap-2 pt-1">
