@@ -3304,9 +3304,11 @@ function renderTLDR() {
 {plan && (
   <div className="grid gap-4 md:grid-cols-3 mb-4">
     {/* What I like */}
-<div className="rounded-2xl p-[1px] bg-gradient-to-r from-emerald-400/70 via-emerald-500/30 to-emerald-400/70 shadow-[0_0_20px_-10px_rgba(16,185,129,0.5)]">
-  <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/70 border border-neutral-800">
-    <div className="text-sm font-semibold text-neutral-200 mb-2">What I like about this contract</div>
+<div className="rounded-2xl ring-1 ring-emerald-400/70 shadow-[0_0_20px_-10px_rgba(16,185,129,0.5)]">
+  <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
+    <div className="text-sm font-semibold text-neutral-200 mb-2">
+      What I like about this contract
+    </div>
     <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
       {plan.likes.map((s, i) => <li key={i}>{s}</li>)}
     </ul>
