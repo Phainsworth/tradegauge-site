@@ -3068,22 +3068,6 @@ function renderTLDR() {
               options={strikes.length ? ["", ...strikes.map((n) => String(n))] : [""]}
               className="solid-input"
             />
-             <div className="mt-1 text-[11px] text-amber-300">
-  strikes: {strikes.length} • allStrikes: {allStrikes.length} • showAll: {String(showAllStrikes)}
-</div>
-             {/* TEMP: debug select fed by strikes */}
-<div className="mt-1">
-  <select
-    className="w-full rounded-md bg-neutral-900/70 border border-neutral-800 px-2 py-1 text-sm text-neutral-200"
-    value={String(form.strike ?? "")}
-    onChange={(e) => setForm({ ...form, strike: e.target.value })}
-  >
-    <option value="">Select strike</option>
-    {strikes.map((n) => (
-      <option key={n} value={n}>{n}</option>
-    ))}
-  </select>
-</div>
             <Select
               label={`Expiration${loadingExp ? " (loading…)" : ""}`}
               name="expiry"
