@@ -3068,6 +3068,9 @@ function renderTLDR() {
               options={strikes.length ? ["", ...strikes.map((n) => String(n))] : [""]}
               className="solid-input"
             />
+             <div className="mt-1 text-[11px] text-amber-300">
+  strikes: {strikes.length} • allStrikes: {allStrikes.length} • showAll: {String(showAllStrikes)}
+</div>
             <Select
               label={`Expiration${loadingExp ? " (loading…)" : ""}`}
               name="expiry"
