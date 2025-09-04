@@ -3741,7 +3741,7 @@ function toneForROI(roi?: number) {
 
 
 <div className="text-center text-neutral-600 text-xs pb-10 relative z-10">
-  v1.05 · Not financial advice · Powered By AI · Data you enter is not saved
+  THIS IS IN BETA! NOT FINANCIAL ADVICE
 </div>
 
 {/* Floating “Key” legend — left side */}
