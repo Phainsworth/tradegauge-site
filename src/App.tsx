@@ -195,7 +195,26 @@ const [quote, setQuote] = useState<{bid:string; ask:string; last:string; mark:st
   const [headlines, setHeadlines] = useState<Headline[]>([]);
   const [econEvents, setEconEvents] = useState<EconEvent[]>([]);
   const [earnings, setEarnings] = useState<Earnings | null>(null);
-
+// --- Patch notes (home screen only) ---
+const APP_VERSION = "v1.06";
+const PATCH_NOTES: Array<{ date: string; title: string; items: string[] }> = [
+  {
+    date: "2025-09-03",
+    title: "Reset & UX",
+    items: [
+      "Added “Try another contract” button under Inputs.",
+      "Hidden during scoring; glassy theme to match UI.",
+    ],
+  },
+  {
+    date: "2025-08-30",
+    title: "Results polish",
+    items: [
+      "Borders on approach boxes (red/yellow/green/gold).",
+      "Cleaner copy for routes & guardrails.",
+    ],
+  },
+];
 
   // Cache chains per ticker
   const chainCache = useRef<Map<string, any[]>>(new Map());
@@ -2885,7 +2904,43 @@ function renderTLDR() {
 </button>
   </div>
 )}
+{/* Home meta strip — only before submit */}
+{!submitted && (
+  <div className="max-w-5xl mx-auto px-4 -mt-1 mb-3 text-center">
+    <div className="inline-flex items-center gap-2 text-[12px] text-neutral-500">
+      <span>{APP_VERSION}</span>
+      <span className="text-neutral-700">•</span>
+      <span>Powered by AI</span>
+      <span className="text-neutral-700">•</span>
 
+      <details className="inline-block">
+        <summary className="inline-flex items-center gap-1 cursor-pointer text-neutral-400 hover:text-neutral-300 list-none">
+          Patch notes
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+          </svg>
+        </summary>
+
+        <div className="mt-3 text-left rounded-2xl border border-neutral-800 bg-neutral-900/60 backdrop-blur p-4 shadow-xl">
+          <div className="space-y-3">
+            {PATCH_NOTES.map((n) => (
+              <div key={n.date}>
+                <div className="text-[11px] text-neutral-500 uppercase tracking-widest">
+                  {n.date} — {n.title}
+                </div>
+                <ul className="mt-1 list-disc pl-5 space-y-1 text-sm text-neutral-300">
+                  {n.items.map((it, i) => (
+                    <li key={i}>{it}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      </details>
+    </div>
+  </div>
+)}
       {/* Results */}
       {submitted && (
         <div className="relative z-10 max-w-5xl mx-auto px-4 pb-20">
