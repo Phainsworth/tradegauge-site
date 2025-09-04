@@ -55,10 +55,14 @@ const [plan, setPlan] = useState<PlanOut | null>(null);
   // Chain UI
   const [expirations, setExpirations] = useState<string[]>([]);
   const [strikes, setStrikes] = useState<number[]>([]);
+   const [allStrikes, setAllStrikes] = useState<number[]>([]);
+const [showAllStrikes, setShowAllStrikes] = useState(false);
   const strikeTouchedRef = useRef(false);
   const [loadingExp, setLoadingExp] = useState(false);
   const [loadingStrikes, setLoadingStrikes] = useState(false);
-
+// Strike filtering (view)
+const STRIKE_WINDOW_PCT = 0.25; // show strikes within ±25% of spot
+const MIN_STRIKES_TO_SHOW = 30; // ensure at least this many by expanding window if needed
 
   // AI insights
   type Insights = {
@@ -1237,6 +1241,46 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
     setLlmStatus("Analyzing…");
 
     // ---------- parse helpers ----------
+     function filterStrikesForView(args: {
+  spot: number | null;
+  all: number[];
+  current: number | null;
+  pctWindow: number;
+  minCount: number;
+}): number[] {
+  const { spot, all, current, pctWindow, minCount } = args;
+  if (!Array.isArray(all) || all.length === 0) return [];
+
+  const sorted = [...all].sort((a, b) => a - b);
+
+  // If we don't know spot yet, just return first N
+  if (!Number.isFinite(spot as any)) {
+    const head = sorted.slice(0, Math.max(minCount, 1));
+    if (current != null && !head.includes(current)) head.push(current);
+    return [...new Set(head)].sort((a, b) => a - b);
+  }
+
+  const s = spot as number;
+  let w = Math.max(0.01, pctWindow);
+  let lo = s * (1 - w);
+  let hi = s * (1 + w);
+
+  let view = sorted.filter((x) => x >= lo && x <= hi);
+
+  // Expand window until we have a minimum count (avoid empty dropdowns)
+  while (view.length < minCount && w < 1.0) {
+    w *= 1.25;
+    lo = s * (1 - w);
+    hi = s * (1 + w);
+    view = sorted.filter((x) => x >= lo && x <= hi);
+  }
+
+  // Always include current selection if provided
+  if (current != null && !view.includes(current)) view.push(current);
+
+  return [...new Set(view)].sort((a, b) => a - b);
+}
+
      function parsePlanJSON(txt: string): PlanOut | null {
   try {
     const j = JSON.parse(txt);
@@ -1738,10 +1782,11 @@ async function fetchOptionChain(symbol: string, opts?: { force?: boolean }) {
 
 
   async function loadStrikesAllExpiries(tkr: string, type?: "CALL" | "PUT") {
-    if (!type) {
-      setStrikes([]);
-      return;
-    }
+if (!type) {
+  setAllStrikes([]);
+  setStrikes([]);
+  return;
+}
     setLoadingStrikes(true);
     try {
       const data = await fetchOptionChain(tkr);
@@ -1754,7 +1799,27 @@ async function fetchOptionChain(symbol: string, opts?: { force?: boolean }) {
             .filter((n: number) => Number.isFinite(n))
         )
       ).sort((a, b) => a - b);
-      setStrikes(list);
+      setAllStrikes(list);
+
+const spotNum =
+  form.spot !== "" && Number.isFinite(Number(form.spot))
+    ? Number(form.spot)
+    : null;
+
+const curr =
+  Number.isFinite(Number(form.strike)) ? Number(form.strike) : null;
+
+const view = showAllStrikes
+  ? [...list].sort((a, b) => a - b)
+  : filterStrikesForView({
+      spot: spotNum,
+      all: list,
+      current: curr,
+      pctWindow: STRIKE_WINDOW_PCT,   // ±% window around spot
+      minCount: MIN_STRIKES_TO_SHOW,  // ensure at least this many show
+    });
+
+setStrikes(view);
     } catch (e) {
       addDebug("loadStrikesAllExpiries error", e);
     } finally {
