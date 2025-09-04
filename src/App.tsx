@@ -1144,7 +1144,30 @@ Output strictly JSON:
 `.trim();
 }
 
+function makeFallbackPlan(args: {
+  dte: number;
+  ivPct: number | null;
+  spreadWide: boolean | null;
+  explainers: string[];
+}): { likes: string[]; watchouts: string[]; plan: string } {
+  const likes: string[] = [];
+  const watchouts: string[] = [];
 
+  if (args.ivPct != null && args.ivPct < 50) likes.push("IV is reasonable — not nosebleed.");
+  likes.push("Near the money so delta actually moves with the stock.");
+  likes.push("Trend is constructive; buyers showed up on dips recently.");
+
+  if (args.dte <= 7) watchouts.push("Theta speeds up inside ~7 DTE — time matters.");
+  if (args.spreadWide === true) watchouts.push("Spread is wide; execution penalty is real.");
+  watchouts.push("Breakeven needs a decent push — chop bleeds premium.");
+
+  const plan =
+    "Wait for a pullback to prior support plus a higher low, then take a small starter only after reclaiming yesterday’s high with volume. " +
+    "Guardrails: skip if the spread widens > ~8%; invalid if it closes back inside yesterday’s range; time stop after 2 sessions if momentum never shows. ";
+
+  const extra = (args.explainers || []).slice(0, 2);
+  return { likes, watchouts, plan: extra.length ? plan : plan };
+}
 // analyzeWithAI — rewritten to use Netlify Function (server-side OpenAI key)
 // Assumes you have a Netlify function at "/.netlify/functions/openai-chat" that forwards
 // { model, temperature, messages, response_format? } to OpenAI's Chat Completions API
@@ -1486,11 +1509,30 @@ try {
     response_format: { type: "json_object" },
   });
 
-  const planText = planResp?.choices?.[0]?.message?.content?.trim() || "{}";
+    const planText = planResp?.choices?.[0]?.message?.content?.trim() || "{}";
   const planOut = parsePlanJSON(planText);
-  if (planOut) setPlan(planOut);
+console.log("[PLAN raw]", planText);
+  if (planOut) {
+    setPlan(planOut);
+  } else {
+    // Fallback based on current context
+    const fb = makeFallbackPlan({
+      dte: daysToExpiry,
+      ivPct,
+      spreadWide,
+      explainers: combinedDrivers || [],
+    });
+    setPlan(fb);
+  }
 } catch (e) {
   addDebug("plan generation failed", e);
+  const fb = makeFallbackPlan({
+    dte: daysToExpiry,
+    ivPct,
+    spreadWide,
+    explainers: combinedDrivers || [],
+  });
+  setPlan(fb);
 }
       async function callOpenAIRoutes(useStrictJson: boolean) {
         return await callOpenAIProxy({
