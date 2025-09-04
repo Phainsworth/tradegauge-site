@@ -3088,6 +3088,7 @@ function renderTLDR() {
                   {form.ticker.toUpperCase()} {form.type} {fmtStrike(parsed.strike)} •{" "}
                   {displayMDY(form.expiry)}
                 </div>
+                 <div className="text-[11px] text-amber-300 mb-2">plan present: {String(!!plan)}</div>
 <div className="text-neutral-400 text-sm mt-1">
   <span className="mr-1">Spot</span>
   <span className="text-neutral-100 font-medium">
