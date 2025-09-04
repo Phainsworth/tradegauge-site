@@ -1781,51 +1781,72 @@ async function fetchOptionChain(symbol: string, opts?: { force?: boolean }) {
   }
 
 
-  async function loadStrikesAllExpiries(tkr: string, type?: "CALL" | "PUT") {
-if (!type) {
-  setAllStrikes([]);
-  setStrikes([]);
-  return;
-}
-    setLoadingStrikes(true);
-    try {
-      const data = await fetchOptionChain(tkr);
-      const allLegs: any[] = [];
-      for (const node of data) allLegs.push(...extractLegsForType(node, type));
-      const list = Array.from(
-        new Set(
-          allLegs
-            .map((o: any) => Number(o?.strike ?? o?.strikePrice))
-            .filter((n: number) => Number.isFinite(n))
-        )
-      ).sort((a, b) => a - b);
-      setAllStrikes(list);
-
-const spotNum =
-  form.spot !== "" && Number.isFinite(Number(form.spot))
-    ? Number(form.spot)
-    : null;
-
-const curr =
-  Number.isFinite(Number(form.strike)) ? Number(form.strike) : null;
-
-const view = showAllStrikes
-  ? [...list].sort((a, b) => a - b)
-  : filterStrikesForView({
-      spot: spotNum,
-      all: list,
-      current: curr,
-      pctWindow: STRIKE_WINDOW_PCT,   // ±% window around spot
-      minCount: MIN_STRIKES_TO_SHOW,  // ensure at least this many show
-    });
-
-setStrikes(view);
-    } catch (e) {
-      addDebug("loadStrikesAllExpiries error", e);
-    } finally {
-      setLoadingStrikes(false);
-    }
+async function loadStrikesAllExpiries(tkr: string, type?: "CALL" | "PUT") {
+  // Guard: missing type/ticker -> clear both and bail
+  if (!tkr || !type) {
+    setAllStrikes([]);
+    setStrikes([]);
+    return;
   }
+
+  setLoadingStrikes(true);
+  try {
+    // 1) Fetch full chain and normalize to a sorted, unique number list
+    const data = await fetchOptionChain(tkr);
+    const allLegs: any[] = [];
+    for (const node of data) allLegs.push(...extractLegsForType(node, type));
+
+    const list: number[] = Array.from(
+      new Set(
+        allLegs
+          .map((o: any) => Number(o?.strike ?? o?.strikePrice))
+          .filter((n: number) => Number.isFinite(n))
+      )
+    ).sort((a, b) => a - b);
+
+    // Store the raw, full list
+    setAllStrikes(list);
+
+    // Debug counters
+    console.log("[chain] strikes total:", list.length, "spot:", form.spot, "showAll:", showAllStrikes);
+
+    // 2) Build the visible view (window around spot unless 'show all' is on)
+    const spotNum =
+      form.spot !== "" && Number.isFinite(Number(form.spot))
+        ? Number(form.spot)
+        : null;
+
+    const curr =
+      Number.isFinite(Number(form.strike)) ? Number(form.strike) : null;
+
+    let view = showAllStrikes
+      ? [...list]
+      : filterStrikesForView({
+          spot: spotNum,
+          all: list,
+          current: curr,                          // keep current selection visible
+          pctWindow: STRIKE_WINDOW_PCT,           // ±% window around spot
+          minCount: MIN_STRIKES_TO_SHOW,          // ensure at least this many
+        });
+
+    // 3) Safety: never render an empty dropdown — fall back to full list
+    if (!Array.isArray(view) || view.length === 0) {
+      console.warn("[chain] filtered view empty; falling back to full list");
+      view = [...list];
+      if (curr != null && !view.includes(curr)) view.push(curr);
+      view.sort((a, b) => a - b);
+    }
+
+    setStrikes(view);
+  } catch (e) {
+    addDebug("loadStrikesAllExpiries error", e);
+    // Be graceful on failure
+    setAllStrikes([]);
+    setStrikes([]);
+  } finally {
+    setLoadingStrikes(false);
+  }
+}
 
 
  // Spot (Finnhub) — via Netlify proxy (no FINNHUB_KEY in browser)
