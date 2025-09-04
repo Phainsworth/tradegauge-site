@@ -50,6 +50,8 @@ type RoutesOut = {
 };
 
 const [routes, setRoutes] = useState<RoutesOut | null>(null);
+   type PlanOut = { likes: string[]; watchouts: string[]; plan: string };
+const [plan, setPlan] = useState<PlanOut | null>(null);
   // Chain UI
   const [expirations, setExpirations] = useState<string[]>([]);
   const [strikes, setStrikes] = useState<number[]>([]);
@@ -415,6 +417,7 @@ function resetToHome() {
   setExpirations([]);
   setStrikes([]);
   setRoutes(null);
+   setPlan(null);
 
   // Reset live quote display
   setQuote({ bid: "—", ask: "—", last: "—", mark: "—", src: "" });
@@ -957,7 +960,19 @@ STRICT JSON OUTPUT:
 }
 Output raw JSON only—no markdown, no backticks.`.trim();
 }
+function makePlanSystemPrompt() {
+  return `
+You are a seasoned options friend. Middle-of-the-road risk stance by default.
+Tone: casual, concise, human; 0–2 emojis total only if they help. No hard $ prices.
 
+Return STRICT JSON ONLY:
+{
+  "likes": ["short bullet", "..."],
+  "watchouts": ["short bullet", "..."],
+  "plan": "one clear middle-risk plan: when to act (conditions), why, and guardrails (invalidation, spread %, time stop). No exact dollar amounts."
+}
+Output raw JSON only—no markdown.`.trim();
+}
   function makeBuddyUserPrompt(payload: any) {
     const { ticker, optionType, strike, expiry, spot, greeks, derived, dte, earnings, macro_events } = payload;
 
@@ -1148,6 +1163,15 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
     setLlmStatus("Analyzing…");
 
     // ---------- parse helpers ----------
+     function parsePlanJSON(txt: string): PlanOut | null {
+  try {
+    const j = JSON.parse(txt);
+    if (Array.isArray(j?.likes) && Array.isArray(j?.watchouts) && typeof j?.plan === "string") {
+      return { likes: j.likes.slice(0, 6), watchouts: j.watchouts.slice(0, 6), plan: j.plan.trim() };
+    }
+  } catch {}
+  return null;
+}
     const toNumOrNull = (s: string) =>
       s && s !== "—" && isFinite(Number(s)) ? Number(s) : null;
 
@@ -1445,7 +1469,29 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
         liquidityOi,
         spreadWide,
       });
+// --- Plan call (Pros / Watch-outs / What I'd do) ---
+try {
+  const planResp = await callOpenAIProxy({
+    model: "gpt-4o-mini",
+    temperature: 0.7,
+    messages: [
+      { role: "system", content: makePlanSystemPrompt() },
+      {
+        role: "user",
+        content:
+          routesUser +
+          "\n- Price guidance: generic-only\n- Output strictly likes/watchouts/plan as described."
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
 
+  const planText = planResp?.choices?.[0]?.message?.content?.trim() || "{}";
+  const planOut = parsePlanJSON(planText);
+  if (planOut) setPlan(planOut);
+} catch (e) {
+  addDebug("plan generation failed", e);
+}
       async function callOpenAIRoutes(useStrictJson: boolean) {
         return await callOpenAIProxy({
           model: "gpt-4o-mini",
@@ -3077,6 +3123,7 @@ function renderTLDR() {
 
     {/* Nearby alternatives (simple, actionable) */}
     {/* What I'd do if I were you */}
+     {false && (
 <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-3">
   <div className="text-neutral-300 text-xs uppercase tracking-widest mb-2">
     
@@ -3148,6 +3195,7 @@ function renderTLDR() {
     </div>
   )}
 </div>
+   )}
 
 {/* Save & Share */}
 <div className="flex flex-wrap gap-2 pt-1">
