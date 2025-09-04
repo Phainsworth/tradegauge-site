@@ -1245,17 +1245,20 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
   spot: number | null;
   all: number[];
   current: number | null;
-  pctWindow: number;
-  minCount: number;
+  pctWindow: number | undefined;
+  minCount: number | undefined;
 }): number[] {
-  const { spot, all, current, pctWindow, minCount } = args;
+  const { spot, all, current } = args;
+  const pctWindow = Number.isFinite(args.pctWindow as any) ? (args.pctWindow as number) : 0.25; // default ±25%
+  const minCount = Number.isFinite(args.minCount as any) ? Math.max(1, args.minCount as number) : 30; // default 30
+
   if (!Array.isArray(all) || all.length === 0) return [];
 
   const sorted = [...all].sort((a, b) => a - b);
 
-  // If we don't know spot yet, just return first N
+  // If no spot yet, just show the first N (and include current if any)
   if (!Number.isFinite(spot as any)) {
-    const head = sorted.slice(0, Math.max(minCount, 1));
+    const head = sorted.slice(0, minCount);
     if (current != null && !head.includes(current)) head.push(current);
     return [...new Set(head)].sort((a, b) => a - b);
   }
@@ -1267,7 +1270,7 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
 
   let view = sorted.filter((x) => x >= lo && x <= hi);
 
-  // Expand window until we have a minimum count (avoid empty dropdowns)
+  // Expand until we have enough
   while (view.length < minCount && w < 1.0) {
     w *= 1.25;
     lo = s * (1 - w);
@@ -1275,9 +1278,7 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
     view = sorted.filter((x) => x >= lo && x <= hi);
   }
 
-  // Always include current selection if provided
   if (current != null && !view.includes(current)) view.push(current);
-
   return [...new Set(view)].sort((a, b) => a - b);
 }
 
@@ -1824,19 +1825,20 @@ async function loadStrikesAllExpiries(tkr: string, type?: "CALL" | "PUT") {
       : filterStrikesForView({
           spot: spotNum,
           all: list,
-          current: curr,                          // keep current selection visible
-          pctWindow: STRIKE_WINDOW_PCT,           // ±% window around spot
-          minCount: MIN_STRIKES_TO_SHOW,          // ensure at least this many
+          current: curr,                  // keep current selection visible
+          pctWindow: STRIKE_WINDOW_PCT,   // ±% window around spot
+          minCount: MIN_STRIKES_TO_SHOW,  // ensure at least this many
         });
 
     // 3) Safety: never render an empty dropdown — fall back to full list
     if (!Array.isArray(view) || view.length === 0) {
-      console.warn("[chain] filtered view empty; falling back to full list");
+      console.warn("[chain] loader view empty; falling back to full list");
       view = [...list];
-      if (curr != null && !view.includes(curr)) view.push(curr);
-      view.sort((a, b) => a - b);
     }
+    if (curr != null && !view.includes(curr)) view.push(curr);
+    view.sort((a, b) => a - b);
 
+    console.log("[chain] view count:", view.length);
     setStrikes(view);
   } catch (e) {
     addDebug("loadStrikesAllExpiries error", e);
