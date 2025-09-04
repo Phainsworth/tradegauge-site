@@ -1519,31 +1519,7 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
 
     setInsights(parsed);
 
-    // ---------- AI call: "What I'd do if I were you" (3 routes + pick) ----------
-    try {
-      const routesUser = makeRoutesUserPrompt({
-        finalScore,
-        type: form.type as "CALL" | "PUT",
-        strike: Number(form.strike),
-        spot: form.spot === "" ? NaN : Number(form.spot),
-        dte: daysToExpiry,
-        iv: ivPctForRoutes,
-        theta: thetaNum,
-        delta: deltaNum,
-        gamma: gammaNum,
-        pricePaid: form.pricePaid === "" ? null : Number(form.pricePaid),
-        bid: bidNow,
-        ask: askNow,
-        last: lastNow,
-        mark: markNowForRoutes,
-        pnlPct: pnlPctForRoutes,
-        breakevenGapPct,
-        earningsDays,
-        macroSoon: macroSoonStr,
-        liquidityOi,
-        spreadWide,
-      });
-// --- Plan call (Pros / Watch-outs / What I'd do) ---
+     // --- Plan call (Pros / Watch-outs / What I'd do) ---
 try {
   const planUser = makePlanUserPrompt({
     ticker: form.ticker.toUpperCase(),
@@ -1595,16 +1571,32 @@ try {
   });
   setPlan(fb);
 }
-} catch (e) {
-  addDebug("plan generation failed", e);
-  const fb = makeFallbackPlan({
-    dte: daysToExpiry,
-    ivPct,
-    spreadWide,
-    explainers: combinedDrivers || [],
-  });
-  setPlan(fb);
-}
+
+    // ---------- AI call: "What I'd do if I were you" (3 routes + pick) ----------
+    try {
+      const routesUser = makeRoutesUserPrompt({
+        finalScore,
+        type: form.type as "CALL" | "PUT",
+        strike: Number(form.strike),
+        spot: form.spot === "" ? NaN : Number(form.spot),
+        dte: daysToExpiry,
+        iv: ivPctForRoutes,
+        theta: thetaNum,
+        delta: deltaNum,
+        gamma: gammaNum,
+        pricePaid: form.pricePaid === "" ? null : Number(form.pricePaid),
+        bid: bidNow,
+        ask: askNow,
+        last: lastNow,
+        mark: markNowForRoutes,
+        pnlPct: pnlPctForRoutes,
+        breakevenGapPct,
+        earningsDays,
+        macroSoon: macroSoonStr,
+        liquidityOi,
+        spreadWide,
+      });
+
       async function callOpenAIRoutes(useStrictJson: boolean) {
         return await callOpenAIProxy({
           model: "gpt-4o-mini",
