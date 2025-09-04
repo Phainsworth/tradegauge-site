@@ -973,6 +973,57 @@ Return STRICT JSON ONLY:
 }
 Output raw JSON only—no markdown.`.trim();
 }
+function makePlanUserPrompt(args: {
+  ticker: string;
+  optionType: "CALL" | "PUT";
+  strike: number;
+  expiry: string;
+  dte: number;
+  ivPct: number | null;
+  pnlPct: number | null;
+  distance_otm_pct: number | null;
+  spreadWide: boolean | null;
+  liquidityOi: number | null;
+  earningsDays: number | null;
+  macroSoon: string | null;
+}) {
+  const ivStr = args.ivPct == null ? "—" : `${args.ivPct}%`;
+  const pnlStr = args.pnlPct == null ? "—" : `${Math.round(args.pnlPct)}%`;
+  const distStr = args.distance_otm_pct == null ? "—" : `${Math.round(args.distance_otm_pct)}%`;
+  const spreadStr = args.spreadWide == null ? "unknown" : args.spreadWide ? "wide" : "normal";
+  const oiStr = args.liquidityOi == null ? "—" : `${args.liquidityOi}`;
+  const earnStr =
+    args.earningsDays == null ? "none" :
+    args.earningsDays <= 0 ? "today" :
+    args.earningsDays <= 7 ? `in ${args.earningsDays} day(s)` :
+    `in ~${args.earningsDays} day(s)`;
+  const macroStr = args.macroSoon ? args.macroSoon : "none";
+
+  return `
+Contract: ${args.ticker} ${args.optionType} ${args.strike} exp ${args.expiry}
+DTE: ${args.dte}
+IV: ${ivStr}
+PnL% (if any): ${pnlStr}
+Distance OTM%: ${distStr}
+Spread: ${spreadStr}
+Open Interest: ${oiStr}
+Earnings: ${earnStr}
+Macro (7d): ${macroStr}
+
+Write PROS / WATCH-OUTS / WHAT I'D DO for THIS contract.
+- Middle-of-the-road risk tone (not aggressive, not passive).
+- Condition-based only. NO exact dollar amounts.
+- Use 0–2 emojis max, only if they truly help.
+- Keep bullets short and specific; plan includes invalidation, spread condition, and time stop.
+
+Return STRICT JSON ONLY:
+{
+  "likes": ["short bullet", "..."],
+  "watchouts": ["short bullet", "..."],
+  "plan": "one clear middle-risk plan with conditions + guardrails. No hard prices."
+}`.trim();
+}
+   
   function makeBuddyUserPrompt(payload: any) {
     const { ticker, optionType, strike, expiry, spot, greeks, derived, dte, earnings, macro_events } = payload;
 
@@ -1494,28 +1545,38 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
       });
 // --- Plan call (Pros / Watch-outs / What I'd do) ---
 try {
+  const planUser = makePlanUserPrompt({
+    ticker: form.ticker.toUpperCase(),
+    optionType: form.type as "CALL" | "PUT",
+    strike: Number(form.strike),
+    expiry: form.expiry,
+    dte: daysToExpiry,
+    ivPct,
+    pnlPct: pnlPctForRoutes,
+    distance_otm_pct: breakevenGapPct == null ? null : d.distance_otm_pct, // use your derived distance if available
+    spreadWide,
+    liquidityOi,
+    earningsDays,
+    macroSoon: macroSoonStr,
+  });
+
   const planResp = await callOpenAIProxy({
     model: "gpt-4o-mini",
     temperature: 0.7,
     messages: [
       { role: "system", content: makePlanSystemPrompt() },
-      {
-        role: "user",
-        content:
-          routesUser +
-          "\n- Price guidance: generic-only\n- Output strictly likes/watchouts/plan as described."
-      },
+      { role: "user", content: planUser },
     ],
     response_format: { type: "json_object" },
   });
 
-    const planText = planResp?.choices?.[0]?.message?.content?.trim() || "{}";
+  const planText = planResp?.choices?.[0]?.message?.content?.trim() || "{}";
+  console.log("[PLAN raw]", planText);
   const planOut = parsePlanJSON(planText);
-console.log("[PLAN raw]", planText);
+
   if (planOut) {
     setPlan(planOut);
   } else {
-    // Fallback based on current context
     const fb = makeFallbackPlan({
       dte: daysToExpiry,
       ivPct,
@@ -1524,6 +1585,16 @@ console.log("[PLAN raw]", planText);
     });
     setPlan(fb);
   }
+} catch (e) {
+  addDebug("plan generation failed", e);
+  const fb = makeFallbackPlan({
+    dte: daysToExpiry,
+    ivPct,
+    spreadWide,
+    explainers: combinedDrivers || [],
+  });
+  setPlan(fb);
+}
 } catch (e) {
   addDebug("plan generation failed", e);
   const fb = makeFallbackPlan({
