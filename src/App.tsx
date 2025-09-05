@@ -61,8 +61,8 @@ const [showAllStrikes, setShowAllStrikes] = useState(false);
   const [loadingExp, setLoadingExp] = useState(false);
   const [loadingStrikes, setLoadingStrikes] = useState(false);
 // Strike filtering (view)
-const STRIKE_WINDOW_PCT = 0.25; // show strikes within ±25% of spot
-const MIN_STRIKES_TO_SHOW = 30; // ensure at least this many by expanding window if needed
+// Show exactly 15 strikes below and 15 above the closest-to-spot strike (≈31 total)
+const STRIKES_EACH_SIDE = 15;
 
   // AI insights
   type Insights = {
@@ -1240,46 +1240,70 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
     setIsGenLoading(true);
     setLlmStatus("Analyzing…");
 
-    // ---------- parse helpers ----------
-     function filterStrikesForView(args: {
+function filterStrikesForView(args: {
   spot: number | null;
   all: number[];
   current: number | null;
-  pctWindow: number | undefined;
-  minCount: number | undefined;
+  eachSide?: number;            // NEW: fixed count each side of closest-to-spot
+  pctWindow?: number;           // legacy fallback
+  minCount?: number;            // legacy fallback
 }): number[] {
   const { spot, all, current } = args;
-  const pctWindow = Number.isFinite(args.pctWindow as any) ? (args.pctWindow as number) : 0.25; // default ±25%
-  const minCount = Number.isFinite(args.minCount as any) ? Math.max(1, args.minCount as number) : 30; // default 30
 
   if (!Array.isArray(all) || all.length === 0) return [];
 
   const sorted = [...all].sort((a, b) => a - b);
 
-  // If no spot yet, just show the first N (and include current if any)
-  if (!Number.isFinite(spot as any)) {
-    const head = sorted.slice(0, minCount);
-    if (current != null && !head.includes(current)) head.push(current);
-    return [...new Set(head)].sort((a, b) => a - b);
+  // ----- preferred: count-based window -----
+  const eachSide =
+    Number.isFinite(args.eachSide as any) ? Math.max(0, (args.eachSide as number) | 0) : null;
+
+  if (Number.isFinite(spot) && eachSide !== null) {
+    const s = spot as number;
+
+    // find index of strike closest to spot
+    let idx = 0;
+    let best = Infinity;
+    for (let i = 0; i < sorted.length; i++) {
+      const d = Math.abs(sorted[i] - s);
+      if (d < best) {
+        best = d;
+        idx = i;
+      }
+    }
+
+    const lo = Math.max(0, idx - eachSide);
+    const hi = Math.min(sorted.length - 1, idx + eachSide);
+    let view = sorted.slice(lo, hi + 1);
+
+    if (current != null && !view.includes(current)) view.push(current);
+    return [...new Set(view)].sort((a, b) => a - b);
+  }
+
+  // ----- legacy fallback: %-window until minCount -----
+  const pctWindow = Number.isFinite(args.pctWindow as any) ? (args.pctWindow as number) : 0.25;
+  const minCount = Number.isFinite(args.minCount as any) ? Math.max(1, args.minCount as number) : 30;
+
+  if (!Number.isFinite(spot)) {
+    const n = Math.min(sorted.length, minCount || 30);
+    return sorted.slice(0, n);
   }
 
   const s = spot as number;
   let w = Math.max(0.01, pctWindow);
-  let lo = s * (1 - w);
-  let hi = s * (1 + w);
+  let lo2 = s * (1 - w);
+  let hi2 = s * (1 + w);
+  let view2 = sorted.filter((x) => x >= lo2 && x <= hi2);
 
-  let view = sorted.filter((x) => x >= lo && x <= hi);
-
-  // Expand until we have enough
-  while (view.length < minCount && w < 1.0) {
+  while (view2.length < minCount && w < 1.0) {
     w *= 1.25;
-    lo = s * (1 - w);
-    hi = s * (1 + w);
-    view = sorted.filter((x) => x >= lo && x <= hi);
+    lo2 = s * (1 - w);
+    hi2 = s * (1 + w);
+    view2 = sorted.filter((x) => x >= lo2 && x <= hi2);
   }
 
-  if (current != null && !view.includes(current)) view.push(current);
-  return [...new Set(view)].sort((a, b) => a - b);
+  if (current != null && !view2.includes(current)) view2.push(current);
+  return [...new Set(view2)].sort((a, b) => a - b);
 }
 
      function parsePlanJSON(txt: string): PlanOut | null {
@@ -1860,13 +1884,12 @@ const list: number[] = Array.from(
 
    let view = showAllStrikes
   ? [...list]
-  : filterStrikesForView({
-      spot: spotNum,
-      all: list,
-      current: curr,
-      pctWindow: STRIKE_WINDOW_PCT,
-      minCount: MIN_STRIKES_TO_SHOW,
-    });
+ : filterStrikesForView({
+  spot: spotNum,
+  all: list,
+  current: curr,                // keep current selection visible
+  eachSide: STRIKES_EACH_SIDE,  // ← fixed count each side
+});
 
     // 3) Safety: never render an empty dropdown — fall back to full list
     if (!Array.isArray(view) || view.length === 0) {
