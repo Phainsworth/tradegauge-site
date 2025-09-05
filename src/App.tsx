@@ -2569,7 +2569,7 @@ if (name === "ticker" || name === "type" || name === "expiry") {
   setEarnings(null);
 }
 setSubmitted(false);
-
+};
 // Populate macro (FOMC/CPI/etc.) on app load + refresh every 6h
 useEffect(() => {
   fetchUpcomingMacro().catch(e => addDebug("macro mount error", e));
