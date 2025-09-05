@@ -1252,7 +1252,11 @@ function filterStrikesForView(args: {
 
   if (!Array.isArray(all) || all.length === 0) return [];
 
-  const sorted = [...all].sort((a, b) => a - b);
+  const cleaned = (Array.isArray(all) ? all : []).filter(
+  (x) => Number.isFinite(x as any) && (x as number) > 0
+) as number[];
+if (cleaned.length === 0) return [];
+const sorted = cleaned.sort((a, b) => a - b);
 
   // ----- preferred: count-based window -----
   const eachSide =
@@ -1276,7 +1280,7 @@ function filterStrikesForView(args: {
     const hi = Math.min(sorted.length - 1, idx + eachSide);
     let view = sorted.slice(lo, hi + 1);
 
-    if (current != null && !view.includes(current)) view.push(current);
+    if (current != null && current > 0 && !view.includes(current)) view.push(current);
     return [...new Set(view)].sort((a, b) => a - b);
   }
 
@@ -1302,7 +1306,7 @@ function filterStrikesForView(args: {
     view2 = sorted.filter((x) => x >= lo2 && x <= hi2);
   }
 
-  if (current != null && !view2.includes(current)) view2.push(current);
+  if (current != null && current > 0 && !view2.includes(current)) view2.push(current);
   return [...new Set(view2)].sort((a, b) => a - b);
 }
 
@@ -1808,7 +1812,11 @@ function filterStrikesForView(args: {
 
   if (!Array.isArray(all) || all.length === 0) return [];
 
-  const sorted = [...all].sort((a, b) => a - b);
+  const cleaned = (Array.isArray(all) ? all : []).filter(
+  (x) => Number.isFinite(x as any) && (x as number) > 0
+) as number[];
+if (cleaned.length === 0) return [];
+const sorted = cleaned.sort((a, b) => a - b);
 
   // If no spot yet, just show the first N (and include current if any)
   if (!Number.isFinite(spot as any)) {
@@ -1832,7 +1840,7 @@ function filterStrikesForView(args: {
     view = sorted.filter((x) => x >= lo && x <= hi);
   }
 
-  if (current != null && !view.includes(current)) view.push(current);
+  if (current != null && current > 0 && !view.includes(current)) view.push(current);
   return [...new Set(view)].sort((a, b) => a - b);
 }
   function extractLegsForType(node: any, type: "CALL" | "PUT") {
