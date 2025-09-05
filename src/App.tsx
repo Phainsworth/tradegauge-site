@@ -1771,7 +1771,46 @@ async function fetchOptionChain(symbol: string, opts?: { force?: boolean }) {
     }
   }
 
+function filterStrikesForView(args: {
+  spot: number | null;
+  all: number[];
+  current: number | null;
+  pctWindow: number | undefined;
+  minCount: number | undefined;
+}): number[] {
+  const { spot, all, current } = args;
+  const pctWindow = Number.isFinite(args.pctWindow as any) ? (args.pctWindow as number) : 0.25; // default ±25%
+  const minCount = Number.isFinite(args.minCount as any) ? Math.max(1, args.minCount as number) : 30; // default 30
 
+  if (!Array.isArray(all) || all.length === 0) return [];
+
+  const sorted = [...all].sort((a, b) => a - b);
+
+  // If no spot yet, just show the first N (and include current if any)
+  if (!Number.isFinite(spot as any)) {
+    const head = sorted.slice(0, minCount);
+    if (current != null && !head.includes(current)) head.push(current);
+    return [...new Set(head)].sort((a, b) => a - b);
+  }
+
+  const s = spot as number;
+  let w = Math.max(0.01, pctWindow);
+  let lo = s * (1 - w);
+  let hi = s * (1 + w);
+
+  let view = sorted.filter((x) => x >= lo && x <= hi);
+
+  // Expand until we have enough
+  while (view.length < minCount && w < 1.0) {
+    w *= 1.25;
+    lo = s * (1 - w);
+    hi = s * (1 + w);
+    view = sorted.filter((x) => x >= lo && x <= hi);
+  }
+
+  if (current != null && !view.includes(current)) view.push(current);
+  return [...new Set(view)].sort((a, b) => a - b);
+}
   function extractLegsForType(node: any, type: "CALL" | "PUT") {
     if (Array.isArray(node?.calls) || Array.isArray(node?.puts))
       return type === "CALL" ? node?.calls ?? [] : node?.puts ?? [];
@@ -1820,15 +1859,15 @@ async function loadStrikesAllExpiries(tkr: string, type?: "CALL" | "PUT") {
     const curr =
       Number.isFinite(Number(form.strike)) ? Number(form.strike) : null;
 
-    let view = showAllStrikes
-      ? [...list]
-      : filterStrikesForView({
-          spot: spotNum,
-          all: list,
-          current: curr,                  // keep current selection visible
-          pctWindow: STRIKE_WINDOW_PCT,   // ±% window around spot
-          minCount: MIN_STRIKES_TO_SHOW,  // ensure at least this many
-        });
+   let view = showAllStrikes
+  ? [...list]
+  : filterStrikesForView({
+      spot: spotNum,
+      all: list,
+      current: curr,
+      pctWindow: STRIKE_WINDOW_PCT,
+      minCount: MIN_STRIKES_TO_SHOW,
+    });
 
     // 3) Safety: never render an empty dropdown — fall back to full list
     if (!Array.isArray(view) || view.length === 0) {
@@ -2506,8 +2545,11 @@ setRoutes(null);
   });
 
 
-    if (name === "ticker" || name === "type" || name === "expiry") {
-      if (name === "ticker" || name === "type") setStrikes([]);
+if (name === "ticker" || name === "type" || name === "expiry") {
+  if (name === "ticker" || name === "type") {
+    setAllStrikes([]);
+    setStrikes([]);
+  }
       setGreeks({
         delta: "—",
         gamma: "—",
