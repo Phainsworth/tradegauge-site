@@ -205,22 +205,23 @@ const [quote, setQuote] = useState<{bid:string; ask:string; last:string; mark:st
   const [econEvents, setEconEvents] = useState<EconEvent[]>([]);
   const [earnings, setEarnings] = useState<Earnings | null>(null);
 // --- Patch notes (home screen only) ---
-const APP_VERSION = "v1.06";
+const APP_VERSION = "v1.1";
 const PATCH_NOTES: Array<{ date: string; title: string; items: string[] }> = [
   {
-    date: "2025-09-03",
-    title: "Reset & UX",
+    date: "2025-09-05",
+    title: "UI",
     items: [
       "Added “Try another contract” button under Inputs.",
       "Hidden during scoring; glassy theme to match UI.",
+       "Fixed strikes not loading properly",
     ],
   },
   {
-    date: "2025-08-30",
+    date: "2025-09-05",
     title: "Results polish",
     items: [
-      "Borders on approach boxes (red/yellow/green/gold).",
-      "Cleaner copy for routes & guardrails.",
+      "Borders on boxes.",
+      "Adjusted advice logic",
     ],
   },
 ];
