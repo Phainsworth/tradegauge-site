@@ -2552,24 +2552,23 @@ if (name === "ticker" || name === "type" || name === "expiry") {
     setAllStrikes([]);
     setStrikes([]);
   }
-      setGreeks({
-        delta: "—",
-        gamma: "—",
-        theta: "—",
-        vega: "—",
-        iv: "—",
-        openInterest: "—",
-      });
-      setPolyStatus("—");
-      setMatchedContract("");
-      setInsights({ score: 0, advice: [], explainers: [] });
-      setLlmStatus("");
-      setHeadlines([]);
-      setEconEvents([]);
-      setEarnings(null);
-    }
-    setSubmitted(false);
-  };
+  setGreeks({
+    delta: "—",
+    gamma: "—",
+    theta: "—",
+    vega: "—",
+    iv: "—",
+    openInterest: "—",
+  });
+  setPolyStatus("—");
+  setMatchedContract("");
+  setInsights({ score: 0, advice: [], explainers: [] });
+  setLlmStatus("");
+  setHeadlines([]);
+  setEconEvents([]);
+  setEarnings(null);
+}
+setSubmitted(false);
 
 // Populate macro (FOMC/CPI/etc.) on app load + refresh every 6h
 useEffect(() => {
