@@ -1261,10 +1261,9 @@ function filterStrikesForView(args: {
     .map((x: any) => Number(x))
     .filter((n) => Number.isFinite(n) && n > 0)
     .sort((a, b) => a - b);
-
   if (nums.length === 0) return [];
 
-  // Helper: index of closest strike to a target
+  // Helper: nearest index to target
   const closestIdx = (target: number): number => {
     let idx = 0, best = Infinity;
     for (let i = 0; i < nums.length; i++) {
@@ -1274,27 +1273,35 @@ function filterStrikesForView(args: {
     return idx;
   };
 
-  // 2) Preferred: fixed count each side, centered on spot (>0), else current (>0), else middle
-  const countSide =
+  // 2) Preferred: count-based window around center (spot>0 → current>0 → middle)
+  const eachSide =
     Number.isFinite(args.eachSide as any) ? Math.max(0, (args.eachSide as number) | 0) : null;
 
-  if (countSide !== null) {
+  if (eachSide !== null) {
     let idx: number;
     if (Number.isFinite(spot) && (spot as number) > 0) idx = closestIdx(spot as number);
     else if (Number.isFinite(current) && (current as number) > 0) idx = closestIdx(current as number);
     else idx = Math.min(nums.length - 1, Math.floor(nums.length / 2));
 
-    const lo = Math.max(0, idx - countSide);
-    const hi = Math.min(nums.length - 1, idx + countSide);
+    // edge-balanced slice so we still get ~2*eachSide+1 strikes near edges
+    const desired = eachSide * 2 + 1;
+    let lo = idx - eachSide;
+    let hi = idx + eachSide;
+    if (lo < 0) { hi = Math.min(nums.length - 1, hi + (-lo)); lo = 0; }
+    if (hi > nums.length - 1) { const over = hi - (nums.length - 1); lo = Math.max(0, lo - over); hi = nums.length - 1; }
+    if (hi - lo + 1 < desired) {
+      const need = desired - (hi - lo + 1);
+      const addLo = Math.min(lo, Math.floor(need / 2));
+      const addHi = Math.min(nums.length - 1 - hi, need - addLo);
+      lo -= addLo; hi += addHi;
+    }
+
     let view = nums.slice(lo, hi + 1);
-
-    // keep current visible if positive
     if (current != null && current > 0 && !view.includes(current)) view.push(current);
-
     return [...new Set(view)].sort((a, b) => a - b);
   }
 
-  // 3) Legacy fallback: %-window around spot (>0) until minCount
+  // 3) Legacy fallback: %-window until minCount (kept for safety)
   const pctWindow = Number.isFinite(args.pctWindow as any) ? (args.pctWindow as number) : 0.25;
   const minCount  = Number.isFinite(args.minCount  as any) ? Math.max(1, args.minCount  as number) : 30;
 
@@ -1309,18 +1316,36 @@ function filterStrikesForView(args: {
   let lo2 = s * (1 - w);
   let hi2 = s * (1 + w);
   let view2 = nums.filter((x) => x >= lo2 && x <= hi2);
-
   while (view2.length < minCount && w < 1.0) {
-    w *= 1.25;
-    lo2 = s * (1 - w);
-    hi2 = s * (1 + w);
+    w *= 1.25; lo2 = s * (1 - w); hi2 = s * (1 + w);
     view2 = nums.filter((x) => x >= lo2 && x <= hi2);
   }
-
   if (current != null && current > 0 && !view2.includes(current)) view2.push(current);
   return [...new Set(view2)].sort((a, b) => a - b);
 }
 
+  // 3) Legacy fallback: %-window until minCount (kept for safety)
+  const pctWindow = Number.isFinite(args.pctWindow as any) ? (args.pctWindow as number) : 0.25;
+  const minCount  = Number.isFinite(args.minCount  as any) ? Math.max(1, args.minCount  as number) : 30;
+
+  if (!Number.isFinite(spot) || (spot as number) <= 0) {
+    const head = nums.slice(0, Math.min(nums.length, minCount));
+    if (current != null && current > 0 && !head.includes(current)) head.push(current);
+    return [...new Set(head)].sort((a, b) => a - b);
+  }
+
+  const s = spot as number;
+  let w = Math.max(0.01, pctWindow);
+  let lo2 = s * (1 - w);
+  let hi2 = s * (1 + w);
+  let view2 = nums.filter((x) => x >= lo2 && x <= hi2);
+  while (view2.length < minCount && w < 1.0) {
+    w *= 1.25; lo2 = s * (1 - w); hi2 = s * (1 + w);
+    view2 = nums.filter((x) => x >= lo2 && x <= hi2);
+  }
+  if (current != null && current > 0 && !view2.includes(current)) view2.push(current);
+  return [...new Set(view2)].sort((a, b) => a - b);
+}
      function parsePlanJSON(txt: string): PlanOut | null {
   try {
     const j = JSON.parse(txt);
@@ -1961,14 +1986,14 @@ const curr =
     ? Number(form.strike)
     : null;
 
-   let view = showAllStrikes
+let view = showAllStrikes
   ? [...list]
-: filterStrikesForView({
-  spot: spotNum,
-  all: list,
-  current: curr,
-  eachSide: STRIKES_EACH_SIDE,
-});
+  : filterStrikesForView({
+      spot: spotNum,
+      all: list,
+      current: curr,                 // keep current selection visible
+      eachSide: STRIKES_EACH_SIDE,   // fixed count each side
+    });
 
     // 3) Safety: never render an empty dropdown — fall back to full list
     if (!Array.isArray(view) || view.length === 0) {
@@ -2705,7 +2730,35 @@ useEffect(() => {
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.ticker, form.type]);
+// Re-center strikes whenever the raw list or spot/current changes
+useEffect(() => {
+  if (!allStrikes.length) return;
 
+  const spotNum =
+    form.spot !== "" && Number.isFinite(Number(form.spot)) && Number(form.spot) > 0
+      ? Number(form.spot)
+      : null;
+
+  const curr =
+    Number.isFinite(Number(form.strike)) && Number(form.strike) > 0
+      ? Number(form.strike)
+      : null;
+
+  let view = showAllStrikes
+    ? [...allStrikes]
+    : filterStrikesForView({
+        spot: spotNum,
+        all: allStrikes,
+        current: curr,
+        eachSide: STRIKES_EACH_SIDE,
+      });
+
+  if (!Array.isArray(view) || view.length === 0) view = [...allStrikes];
+  if (curr != null && !view.includes(curr)) view.push(curr);
+
+  setStrikes([...new Set(view)].sort((a, b) => a - b));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [allStrikes, form.spot, form.strike, showAllStrikes]);
 
 // Auto-select closest strike to live spot whenever spot/strikes change,
 // unless the user has manually chosen a strike.
