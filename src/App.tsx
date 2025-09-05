@@ -1836,14 +1836,13 @@ async function loadStrikesAllExpiries(tkr: string, type?: "CALL" | "PUT") {
     const allLegs: any[] = [];
     for (const node of data) allLegs.push(...extractLegsForType(node, type));
 
-    const list: number[] = Array.from(
-      new Set(
-        allLegs
-          .map((o: any) => Number(o?.strike ?? o?.strikePrice))
-          .filter((n: number) => Number.isFinite(n))
-      )
-    ).sort((a, b) => a - b);
-
+const list: number[] = Array.from(
+  new Set(
+    allLegs
+      .map((o: any) => Number(o?.strike ?? o?.strikePrice))
+      .filter((n: number) => Number.isFinite(n) && n > 0)
+  )
+).sort((a, b) => a - b);
     // Store the raw, full list
     setAllStrikes(list);
 
@@ -2527,14 +2526,17 @@ setRoutes(null);
     const mk = Number(quote?.mark);
     const refMark = Number.isFinite(mk) && mk > 0 ? mk : undefined;
 
-    // normalizePaid already handles 2800 → 28.00 etc.
-    const n = normalizePaid(value, refMark);
-    if (n != null && Number.isFinite(n)) {
-      setForm((f) => ({ ...f, pricePaid: n.toFixed(2) }));
-    }
-  }, 1738) as unknown as number;
+// normalizePaid already handles 2800 → 28.00 etc.
+let n = normalizePaid(value, refMark);
 
-  return; // prevent the generic setForm below from firing again
+// If user typed only digits with no dot (e.g., "45"),
+// treat it as cents → 0.45 (also "120" → 1.20)
+if (/^\d+$/.test(String(value)) && !String(value).includes(".") && Number(value) <= 999) {
+  n = Number(value) / 100;
+}
+
+if (n != null && Number.isFinite(n)) {
+  setForm((f) => ({ ...f, pricePaid: n.toFixed(2) }));
 }
 
   setForm((f) => {
