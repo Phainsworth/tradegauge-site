@@ -1244,13 +1244,13 @@ function filterStrikesForView(args: {
   spot: number | null;
   all: number[];
   current: number | null;
-  eachSide?: number;            // NEW: fixed count each side of closest-to-spot
+  eachSide?: number;            // preferred: fixed count each side
   pctWindow?: number;           // legacy fallback
   minCount?: number;            // legacy fallback
 }): number[] {
   const { spot, all, current } = args;
 
-  // 1) Sanitize: coerce to numbers, keep only positive finite strikes
+  // 1) Sanitize: finite positive only (drop 0 and negatives)
   const nums = (Array.isArray(all) ? all : [])
     .map((x: any) => Number(x))
     .filter((n) => Number.isFinite(n) && n > 0)
@@ -1258,9 +1258,7 @@ function filterStrikesForView(args: {
 
   if (nums.length === 0) return [];
 
-  const countSide =
-    Number.isFinite(args.eachSide as any) ? Math.max(0, (args.eachSide as number) | 0) : null;
-
+  // Helper: index of closest strike to a target
   const closestIdx = (target: number): number => {
     let idx = 0, best = Infinity;
     for (let i = 0; i < nums.length; i++) {
@@ -1270,12 +1268,15 @@ function filterStrikesForView(args: {
     return idx;
   };
 
-  // 2) Preferred path: count-based window around center
+  // 2) Preferred: fixed count each side, centered on spot (>0), else current (>0), else middle
+  const countSide =
+    Number.isFinite(args.eachSide as any) ? Math.max(0, (args.eachSide as number) | 0) : null;
+
   if (countSide !== null) {
     let idx: number;
-    if (Number.isFinite(spot)) idx = closestIdx(spot as number);
-    else if (Number.isFinite(current)) idx = closestIdx(current as number);
-    else idx = Math.floor(nums.length / 2);
+    if (Number.isFinite(spot) && (spot as number) > 0) idx = closestIdx(spot as number);
+    else if (Number.isFinite(current) && (current as number) > 0) idx = closestIdx(current as number);
+    else idx = Math.min(nums.length - 1, Math.floor(nums.length / 2));
 
     const lo = Math.max(0, idx - countSide);
     const hi = Math.min(nums.length - 1, idx + countSide);
@@ -1283,14 +1284,15 @@ function filterStrikesForView(args: {
 
     // keep current visible if positive
     if (current != null && current > 0 && !view.includes(current)) view.push(current);
+
     return [...new Set(view)].sort((a, b) => a - b);
   }
 
-  // 3) Legacy fallback: %-window until minCount
+  // 3) Legacy fallback: %-window around spot (>0) until minCount
   const pctWindow = Number.isFinite(args.pctWindow as any) ? (args.pctWindow as number) : 0.25;
-  const minCount = Number.isFinite(args.minCount as any) ? Math.max(1, args.minCount as number) : 30;
+  const minCount  = Number.isFinite(args.minCount  as any) ? Math.max(1, args.minCount  as number) : 30;
 
-  if (!Number.isFinite(spot)) {
+  if (!Number.isFinite(spot) || (spot as number) <= 0) {
     const head = nums.slice(0, Math.min(nums.length, minCount));
     if (current != null && current > 0 && !head.includes(current)) head.push(current);
     return [...new Set(head)].sort((a, b) => a - b);
@@ -1806,13 +1808,13 @@ function filterStrikesForView(args: {
   spot: number | null;
   all: number[];
   current: number | null;
-  eachSide?: number;            // NEW: fixed count each side of closest-to-spot
+  eachSide?: number;            // preferred: fixed count each side
   pctWindow?: number;           // legacy fallback
   minCount?: number;            // legacy fallback
 }): number[] {
   const { spot, all, current } = args;
 
-  // 1) Sanitize: coerce to numbers, keep only positive finite strikes
+  // 1) Sanitize: finite positive only (drop 0 and negatives)
   const nums = (Array.isArray(all) ? all : [])
     .map((x: any) => Number(x))
     .filter((n) => Number.isFinite(n) && n > 0)
@@ -1820,9 +1822,7 @@ function filterStrikesForView(args: {
 
   if (nums.length === 0) return [];
 
-  const countSide =
-    Number.isFinite(args.eachSide as any) ? Math.max(0, (args.eachSide as number) | 0) : null;
-
+  // Helper: index of closest strike to a target
   const closestIdx = (target: number): number => {
     let idx = 0, best = Infinity;
     for (let i = 0; i < nums.length; i++) {
@@ -1832,12 +1832,15 @@ function filterStrikesForView(args: {
     return idx;
   };
 
-  // 2) Preferred path: count-based window around center
+  // 2) Preferred: fixed count each side, centered on spot (>0), else current (>0), else middle
+  const countSide =
+    Number.isFinite(args.eachSide as any) ? Math.max(0, (args.eachSide as number) | 0) : null;
+
   if (countSide !== null) {
     let idx: number;
-    if (Number.isFinite(spot)) idx = closestIdx(spot as number);
-    else if (Number.isFinite(current)) idx = closestIdx(current as number);
-    else idx = Math.floor(nums.length / 2);
+    if (Number.isFinite(spot) && (spot as number) > 0) idx = closestIdx(spot as number);
+    else if (Number.isFinite(current) && (current as number) > 0) idx = closestIdx(current as number);
+    else idx = Math.min(nums.length - 1, Math.floor(nums.length / 2));
 
     const lo = Math.max(0, idx - countSide);
     const hi = Math.min(nums.length - 1, idx + countSide);
@@ -1845,14 +1848,15 @@ function filterStrikesForView(args: {
 
     // keep current visible if positive
     if (current != null && current > 0 && !view.includes(current)) view.push(current);
+
     return [...new Set(view)].sort((a, b) => a - b);
   }
 
-  // 3) Legacy fallback: %-window until minCount
+  // 3) Legacy fallback: %-window around spot (>0) until minCount
   const pctWindow = Number.isFinite(args.pctWindow as any) ? (args.pctWindow as number) : 0.25;
-  const minCount = Number.isFinite(args.minCount as any) ? Math.max(1, args.minCount as number) : 30;
+  const minCount  = Number.isFinite(args.minCount  as any) ? Math.max(1, args.minCount  as number) : 30;
 
-  if (!Number.isFinite(spot)) {
+  if (!Number.isFinite(spot) || (spot as number) <= 0) {
     const head = nums.slice(0, Math.min(nums.length, minCount));
     if (current != null && current > 0 && !head.includes(current)) head.push(current);
     return [...new Set(head)].sort((a, b) => a - b);
@@ -1912,22 +1916,23 @@ const list: number[] = Array.from(
     // Debug counters
     console.log("[chain] strikes total:", list.length, "spot:", form.spot, "showAll:", showAllStrikes);
 
-    // 2) Build the visible view (window around spot unless 'show all' is on)
-    const spotNum =
-      form.spot !== "" && Number.isFinite(Number(form.spot))
-        ? Number(form.spot)
-        : null;
+   const spotNum =
+  form.spot !== "" && Number.isFinite(Number(form.spot)) && Number(form.spot) > 0
+    ? Number(form.spot)
+    : null;
 
-    const curr =
-      Number.isFinite(Number(form.strike)) ? Number(form.strike) : null;
+const curr =
+  Number.isFinite(Number(form.strike)) && Number(form.strike) > 0
+    ? Number(form.strike)
+    : null;
 
    let view = showAllStrikes
   ? [...list]
 : filterStrikesForView({
   spot: spotNum,
   all: list,
-  current: curr,                // keep current selection visible
-  eachSide: STRIKES_EACH_SIDE,  // ← fixed count each side
+  current: curr,
+  eachSide: STRIKES_EACH_SIDE,
 });
 
     // 3) Safety: never render an empty dropdown — fall back to full list
