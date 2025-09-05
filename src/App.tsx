@@ -3240,7 +3240,7 @@ function renderTLDR() {
 {!submitted && (
   <div className="text-center text-neutral-600 text-xs pb-10 relative z-10">
     <div className="inline-flex items-center gap-2">
-      <span>v1.06</span>
+      <span>v1.1</span>
       <span className="text-neutral-700">•</span>
       <span>Powered by AI</span>
       <span className="text-neutral-700">•</span>
@@ -3256,17 +3256,17 @@ function renderTLDR() {
         <div className="mt-3 text-left rounded-2xl border border-neutral-800 bg-neutral-900/60 backdrop-blur p-4 shadow-xl">
           <div className="space-y-3">
             <div>
-              <div className="text-[11px] text-neutral-500 uppercase tracking-widest">2025-09-03 — Reset & UX</div>
+              <div className="text-[11px] text-neutral-500 uppercase tracking-widest">2025-09-05 — UI</div>
               <ul className="mt-1 list-disc pl-5 space-y-1 text-sm text-neutral-300">
-                <li>Added “Try another contract” under Inputs.</li>
-                <li>Hidden during scoring; glassy theme to match UI.</li>
+                <li>Added “Try another contract” under Inputs</li>
+                <li>Adjusted strike loading logic for better accuracy</li>
               </ul>
             </div>
             <div>
-              <div className="text-[11px] text-neutral-500 uppercase tracking-widest">2025-08-30 — Results polish</div>
+              <div className="text-[11px] text-neutral-500 uppercase tracking-widest">2025-09-04 — Results polish</div>
               <ul className="mt-1 list-disc pl-5 space-y-1 text-sm text-neutral-300">
-                <li>Colored borders on approach boxes (red/yellow/green/gold).</li>
-                <li>Cleaner copy for routes & guardrails.</li>
+                <li>Colored borders on analysis</li>
+                <li>Tweaked AI logic</li>
               </ul>
             </div>
           </div>
