@@ -230,6 +230,12 @@ const PATCH_NOTES: Array<{ date: string; title: string; items: string[] }> = [
   // -----------------------------
   // HELPERS
   // -----------------------------
+   function median(nums) {
+  const a = (nums || []).filter((n) => Number.isFinite(n)).sort((x, y) => x - y);
+  const n = a.length;
+  if (!n) return null;
+  return n % 2 ? a[(n - 1) / 2] : (a[n / 2 - 1] + a[n / 2]) / 2;
+}
 // --- Normalize "Price Paid" (per-share) from messy user input ---
 // Accepts: "28.00", "2800", "$28", ".50", "50c", "50¢", "100", etc.
 // Rule of thumb:
@@ -1910,6 +1916,35 @@ const list: number[] = Array.from(
       .filter((n: number) => Number.isFinite(n) && n > 0)
   )
 ).sort((a, b) => a - b);
+
+     // Derive a live spot from the options payload (many APIs include an underlying/spot on each leg)
+const spotCandidates = allLegs
+  .map((o: any) =>
+    Number(
+      o?.underlying ??
+      o?.underlyingPrice ??
+      o?.underlying_price ??
+      o?.underlyingPriceUSD ??
+      o?.uPrice
+    )
+  )
+  .filter((n: number) => Number.isFinite(n) && n > 0);
+
+const derivedSpot = median(spotCandidates);
+
+// Only set if found, and race-guard so late responses from the previous ticker don't overwrite
+const currentTicker =
+  (typeof symbol === "string" && symbol) ||
+  (typeof tkr === "string" && tkr) ||
+  (form?.ticker ?? "");
+
+if (derivedSpot != null) {
+  setForm((f) =>
+    String(f?.ticker || "").toUpperCase() === String(currentTicker || "").toUpperCase()
+      ? { ...f, spot: String(derivedSpot) }
+      : f
+  );
+}
     // Store the raw, full list
     setAllStrikes(list);
 
@@ -2611,12 +2646,15 @@ if (name === "pricePaid") {
   return; // prevent the generic setForm below from firing again
 }
 
-  setForm((f) => {
-    if (name === "ticker") return { ...f, ticker: value, strike: "" };
-    if (name === "type") return { ...f, type: value, strike: "" };
-    if (name === "expiry") return { ...f, expiry: value };
-    return { ...f, [name]: value };
-  });
+setForm((f) => {
+  if (name === "ticker") {
+    const t = String(value || "").toUpperCase().trim();
+    return { ...f, ticker: t, spot: "", strike: "" }; // clear stale spot + strike
+  }
+  if (name === "type")   return { ...f, type: value,   strike: "" };
+  if (name === "expiry") return { ...f, expiry: value };
+  return { ...f, [name]: value };
+});
 
 
 if (name === "ticker" || name === "type" || name === "expiry") {
