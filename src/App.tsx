@@ -2518,7 +2518,8 @@ if (name === "pricePaid") {
 
   // Hide previous results (same behavior as ticker/type edits)
   setSubmitted(false);
-setRoutes(null);
+  setRoutes(null);
+
   // reset debounce
   if (pricePaidDeb.current) window.clearTimeout(pricePaidDeb.current);
   pricePaidDeb.current = window.setTimeout(() => {
@@ -2526,17 +2527,21 @@ setRoutes(null);
     const mk = Number(quote?.mark);
     const refMark = Number.isFinite(mk) && mk > 0 ? mk : undefined;
 
-// normalizePaid already handles 2800 → 28.00 etc.
-let n = normalizePaid(value, refMark);
+    // normalizePaid already handles 2800 → 28.00 etc.
+    let n = normalizePaid(value, refMark);
 
-// If user typed only digits with no dot (e.g., "45"),
-// treat it as cents → 0.45 (also "120" → 1.20)
-if (/^\d+$/.test(String(value)) && !String(value).includes(".") && Number(value) <= 999) {
-  n = Number(value) / 100;
-}
+    // If user typed only digits with no dot (e.g., "45"),
+    // treat it as cents → 0.45 (also "120" → 1.20)
+    if (/^\d+$/.test(String(value)) && !String(value).includes(".") && Number(value) <= 999) {
+      n = Number(value) / 100;
+    }
 
-if (n != null && Number.isFinite(n)) {
-  setForm((f) => ({ ...f, pricePaid: n.toFixed(2) }));
+    if (n != null && Number.isFinite(n)) {
+      setForm((f) => ({ ...f, pricePaid: n.toFixed(2) }));
+    }
+  }, 1738) as unknown as number;
+
+  return; // prevent the generic setForm below from firing again
 }
 
   setForm((f) => {
