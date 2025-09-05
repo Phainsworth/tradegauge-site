@@ -62,7 +62,7 @@ const [showAllStrikes, setShowAllStrikes] = useState(false);
   const [loadingStrikes, setLoadingStrikes] = useState(false);
 // Strike filtering (view)
 // Show exactly 15 strikes below and 15 above the closest-to-spot strike (≈31 total)
-const STRIKES_EACH_SIDE = 15;
+const STRIKES_EACH_SIDE = 30;
 
   // AI insights
   type Insights = {
@@ -150,7 +150,9 @@ useEffect(() => {
     "Looking through Jerome Powell's window…",
     "Putting the fries in the bag…",
     "Mopping the floors…",
-    "Checking those Trump tweets…",
+    "Checking Trump tweets…",
+    "Pickle.....?",
+    "Is this thing on?",
   ];
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
