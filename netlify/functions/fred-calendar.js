@@ -19,7 +19,14 @@ exports.handler = async (event) => {
     const ymd = (d) => d.toISOString().slice(0, 10);
 
     // FRED releases/dates (includes future dates when include_release_dates_with_no_data=true)
-    const url = `https://api.stlouisfed.org/fred/releases/dates?api_key=${apiKey}&file_type=json&include_release_dates_with_no_data=true&limit=1000`;
+    const url =
+  "https://api.stlouisfed.org/fred/releases/dates"
+  + `?api_key=${apiKey}`
+  + "&file_type=json"
+  + "&include_release_dates_with_no_data=true"
+  + "&realtime_start=1776-07-04"
+  + "&realtime_end=9999-12-31"
+  + "&limit=10000";
     const r = await fetch(url);
     if (!r.ok) throw new Error(`FRED ${r.status}`);
     const j = await r.json();
