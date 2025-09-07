@@ -208,13 +208,33 @@ const [quote, setQuote] = useState<{bid:string; ask:string; last:string; mark:st
   let gone = false;
   (async () => {
     try {
-      const r = await fetch("/.netlify/functions/fred-calendar?days=60");
+      console.log("[FRED] fetch start");
+      const r = await fetch("/.netlify/functions/fred-calendar?days=120");
+      console.log("[FRED] status", r.status);
       const j = await r.json();
-      if (!gone && j?.ok && Array.isArray(j.events)) {
-        setEconEvents(j.events); // {id,type:'macro',title,at ISO,risk,source}
+      console.log("[FRED] body", j);
+
+      if (!gone && j?.ok && Array.isArray(j.events) && j.events.length) {
+        const mapped = j.events
+          .map((ev: any) => {
+            const iso = (ev?.at || "").toString();
+            const date = iso.slice(0, 10); // YYYY-MM-DD
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+            const title = (ev?.title || "Macro").toString();
+            return { title, date };
+          })
+          .filter(Boolean)
+          .slice(0, 10);
+
+        console.log("[FRED] mapped", mapped.length, mapped[0]);
+        setEconEvents(mapped);
+      } else {
+        console.log("[FRED] no events or bad shape");
+        setEconEvents([]);
       }
     } catch (e) {
-      addDebug("fred-calendar error", e);
+      console.error("[FRED] error", e);
+      setEconEvents([]);
     }
   })();
   return () => { gone = true; };
