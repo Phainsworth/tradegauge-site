@@ -2373,7 +2373,7 @@ async function fetchUpcomingMacro() {
     setEconEvents(events.slice(0, 10));
   } catch (e) {
     addDebug("fetchUpcomingMacro FRED error", e);
-    setEconEvents([]);
+    //setEconEvents([]);
   }
 }
 
@@ -4020,33 +4020,39 @@ function toneForROI(roi?: number) {
     Upcoming
   </div>
 
-  {/* DEBUG: what does the UI see? */}
-  {console.log(
-    "FRED fredEconEvents (UI)",
-    Array.isArray(fredEconEvents) ? fredEconEvents.length : "not array",
-    fredEconEvents?.[0]
-  )}
+  {console.log("FRED fredEconEvents (UI)", Array.isArray(fredEconEvents) ? fredEconEvents.length : "not array", fredEconEvents?.[0])}
 
-{Array.isArray(fredEconEvents) && fredEconEvents.length ? (
-  <ul className="space-y-1">
-    {fredEconEvents.map((e: any, i: number) => (
-      <li key={`ev-${i}`} className="flex gap-2">
-        <span className="mt-0.5">•</span>
-        <span>
-          {e.title} —{" "}
-          <span className="text-neutral-500">
-            {displayMDY(e.date)}
-            {e.time ? ` ${e.time}` : ""}
-          </span>
-        </span>
-      </li>
-    ))}
-  </ul>
-) : (
-  <div className="text-neutral-500 text-xs">
-    No macro events found in the next month (COMING SOON).
-  </div>
-)}
+  {(() => {
+    // derive a stable list each render (falls back to cache if needed)
+    let macroList: any[] = Array.isArray(fredEconEvents) ? fredEconEvents : [];
+    if (!macroList.length) {
+      try {
+        const cached = JSON.parse(localStorage.getItem("fredEventsCacheV1") || "[]");
+        if (Array.isArray(cached)) macroList = cached;
+      } catch {}
+    }
+
+    if (!macroList.length) {
+      return <div className="text-neutral-500 text-xs">No macro events found in the next month (COMING SOON).</div>;
+    }
+
+    return (
+      <ul className="space-y-1">
+        {macroList.map((e: any, i: number) => (
+          <li key={`ev-${i}`} className="flex gap-2">
+            <span className="mt-0.5">•</span>
+            <span>
+              {e.title} —{" "}
+              <span className="text-neutral-500">
+                {displayMDY(e.date)}
+                {e.time ? ` ${e.time}` : ""}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    );
+  })()}
 </div>
                 {/* Headlines */}
 <div>
