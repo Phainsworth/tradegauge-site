@@ -203,6 +203,14 @@ const [quote, setQuote] = useState<{bid:string; ask:string; last:string; mark:st
   type Earnings = { date: string; when?: string; confirmed?: boolean };
   const [headlines, setHeadlines] = useState<Headline[]>([]);
 const [fredEconEvents, setFredEconEvents] = useState<EconEvent[]>([]);
+   useEffect(() => {
+  if (!Array.isArray(fredEconEvents) || fredEconEvents.length === 0) {
+    try {
+      const cached = localStorage.getItem("fredEventsCacheV1");
+      if (cached) setFredEconEvents(JSON.parse(cached));
+    } catch {}
+  }
+}, []); // run once on mount
 const econEvents = fredEconEvents;
 const setEconEvents = setFredEconEvents;
   const [earnings, setEarnings] = useState<Earnings | null>(null);
@@ -229,6 +237,7 @@ const setEconEvents = setFredEconEvents;
           .slice(0, 10);
 
         console.log("[FRED] mapped", mapped.length, mapped[0]);
+         try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(mapped)); } catch {}
         setFredEconEvents(mapped)
       } else {
         console.log("[FRED] no events or bad shape");
