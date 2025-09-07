@@ -414,7 +414,7 @@ function softResetForNewInput() {
   setInsights({ score: 0, advice: [], explainers: [] });
   setLlmStatus("");
   setHeadlines([]);
-  setEconEvents([]);
+  // setEconEvents([]); // keep macro events; global, not tied to input
   setEarnings(null);
 }
 // Probability of expiring ITM using IV + DTE (risk‑neutral, drift≈0)
@@ -2344,7 +2344,7 @@ async function fetchEarnings(symbol: string) {
 async function fetchUpcomingMacro() {
   try {
     // Pull major US macro dates from our Netlify function (uses FRED)
-    const r = await fetch("/.netlify/functions/fred-calendar?days=60");
+    const r = await fetch("/.netlify/functions/fred-calendar?days=120");
     const j = await r.json();
 
     const arr = Array.isArray(j?.events) ? j.events : [];
@@ -2578,7 +2578,7 @@ if (name === "ticker" || name === "type" || name === "expiry") {
   setInsights({ score: 0, advice: [], explainers: [] });
   setLlmStatus("");
   setHeadlines([]);
-  setEconEvents([]);
+  // setEconEvents([]); // keep macro events
   setEarnings(null);
 }
 setSubmitted(false);
