@@ -66,13 +66,14 @@ exports.handler = async (event) => {
     // 3) fetch dates per release (includes scheduled future dates with include_release_dates_with_no_data=true)
     const allDates = [];
     for (const p of picked) {
-      const dUrl =
-        "https://api.stlouisfed.org/fred/release/dates"
-        + `?api_key=${apiKey}`
-        + "&file_type=json"
-        + `&release_id=${encodeURIComponent(p.id)}`
-        + "&include_release_dates_with_no_data=true"
-        + "&limit=50";
+const dUrl =
+  "https://api.stlouisfed.org/fred/release/dates"
+  + `?api_key=${apiKey}`
+  + "&file_type=json"
+  + `&release_id=${encodeURIComponent(p.id)}`
+  + "&include_release_dates_with_no_data=true"
+  + "&sort_order=desc"   // <-- get most-recent + upcoming first
+  + "&limit=200";        // <-- grab enough rows to include upcoming months
       const dR = await fetch(dUrl);
       if (!dR.ok) continue; // skip noisy release
       const dJ = await dR.json();
