@@ -2370,10 +2370,10 @@ async function fetchUpcomingMacro() {
 
     // Keep it tidy and near-term
     events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
-    setEconEvents(events.slice(0, 10));
+    setFredEconEvents(events.slice(0, 10));
   } catch (e) {
     addDebug("fetchUpcomingMacro FRED error", e);
-    //setEconEvents([]);
+    setFredEconEvents([]);
   }
 }
 
@@ -4019,9 +4019,6 @@ function toneForROI(roi?: number) {
   <div className="text-neutral-400 text-xs uppercase tracking-widest mb-1">
     Upcoming
   </div>
-
-  {console.log("FRED fredEconEvents (UI)", Array.isArray(fredEconEvents) ? fredEconEvents.length : "not array", fredEconEvents?.[0])}
-
   {(() => {
     // derive a stable list each render (falls back to cache if needed)
     let macroList: any[] = Array.isArray(fredEconEvents) ? fredEconEvents : [];
