@@ -4134,7 +4134,7 @@ function toneForROI(roi?: number) {
 
 
 <div className="text-center text-neutral-600 text-xs pb-10 relative z-10">
-  THIS IS IN BETA! NOT FINANCIAL ADVICE
+  AI MAY MAKE MISTAKES - CHECK IMPORTANT INFO - NOT FINANCIAL ADVICE
 </div>
 
 {/* Floating “Key” legend — left side */}
