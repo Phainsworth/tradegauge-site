@@ -216,39 +216,55 @@ const setEconEvents = setFredEconEvents;
   const [earnings, setEarnings] = useState<Earnings | null>(null);
    useEffect(() => {
   let gone = false;
+
+  const pick = (j: any) =>
+    (Array.isArray(j?.events) ? j.events : [])
+      .map((ev: any) => {
+        const iso = (ev?.at || "").toString();
+        const date = iso.slice(0, 10); // YYYY-MM-DD
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+        const title = (ev?.title || "Macro").toString();
+        const time = (ev?.time || "");
+        return { title, date, time };
+      })
+      .filter(Boolean);
+
   (async () => {
     try {
-      console.log("[FRED] fetch start");
-      const r = await fetch("/.netlify/functions/fred-calendar?days=120");
-      console.log("[FRED] status", r.status);
-      const j = await r.json();
-      console.log("[FRED] body", j);
+      const urls = [
+        "/.netlify/functions/fred-calendar?days=180",
+        "https://www.tradegauge.io/.netlify/functions/fred-calendar?days=180",
+        "https://tradegauge.io/.netlify/functions/fred-calendar?days=180",
+      ];
 
-      if (!gone && j?.ok && Array.isArray(j.events) && j.events.length) {
-        const mapped = j.events
-          .map((ev: any) => {
-            const iso = (ev?.at || "").toString();
-            const date = iso.slice(0, 10); // YYYY-MM-DD
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-            const title = (ev?.title || "Macro").toString();
-            return { title, date };
-          })
-          .filter(Boolean)
-          .slice(0, 10);
+      let best: Array<{ title: string; date: string; time?: string }> = [];
 
-        console.log("[FRED] mapped", mapped.length, mapped[0]);
-         try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(mapped)); } catch {}
-        setFredEconEvents(mapped)
-      } else {
-        console.log("[FRED] no events or bad shape");
-        setFredEconEvents([])
+      for (const u of urls) {
+        const r = await fetch(u, { cache: "no-store" });
+        console.log("[FRED] try", u, r.status);
+        const j = await r.json().catch(() => ({}));
+        const arr = pick(j);
+        console.log("[FRED] found", arr.length, "from", u);
+        if (arr.length > best.length) best = arr;
+        if (best.length >= 10) break; // good enough
       }
-    } catch (e) {
-      console.error("[FRED] error", e);
-      setFredEconEvents([]);
+
+      if (!gone && best.length) {
+        best.sort((a, b) =>
+          (a.date + (a.time || "")).localeCompare(b.date + (b.time || ""))
+        );
+        setFredEconEvents(best.slice(0, 20)); // show up to 20
+      } else if (!gone) {
+        setFredEconEvents([]);
+      }
+    } catch {
+      if (!gone) setFredEconEvents([]);
     }
   })();
-  return () => { gone = true; };
+
+  return () => {
+    gone = true;
+  };
 }, []);
 // --- Patch notes (home screen only) ---
 const APP_VERSION = "v1.1";
