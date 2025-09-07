@@ -202,7 +202,7 @@ const [quote, setQuote] = useState<{bid:string; ask:string; last:string; mark:st
   type EconEvent = { title: string; date: string; time?: string };
   type Earnings = { date: string; when?: string; confirmed?: boolean };
   const [headlines, setHeadlines] = useState<Headline[]>([]);
-  const [fredEconEvents, setFredEconEvents] = useState<any[]>([]);
+const [fredEconEvents, setFredEconEvents] = useState<EconEvent[]>([]);
 const econEvents = fredEconEvents;
 const setEconEvents = setFredEconEvents;
   const [earnings, setEarnings] = useState<Earnings | null>(null);
@@ -232,11 +232,11 @@ const setEconEvents = setFredEconEvents;
         setFredEconEvents(mapped)
       } else {
         console.log("[FRED] no events or bad shape");
-        setFredEconEvents(mapped)
+        setFredEconEvents([])
       }
     } catch (e) {
       console.error("[FRED] error", e);
-      setEconEvents([]);
+      setFredEconEvents([]);
     }
   })();
   return () => { gone = true; };
@@ -4018,28 +4018,26 @@ function toneForROI(roi?: number) {
     fredEconEvents?.[0]
   )}
 
-  {(() => {
-    const list = Array.isArray(fredEconEvents) && fredEconEvents.length
-      ? fredEconEvents
-      : [{ title: "GDP", date: "2025-09-25" }]; // <-- fallback to prove render path
-
-    return (
-      <ul className="space-y-1">
-        {list.map((e: any, i: number) => (
-          <li key={`ev-${i}`} className="flex gap-2">
-            <span className="mt-0.5">•</span>
-            <span>
-              {e.title} —{" "}
-              <span className="text-neutral-500">
-                {displayMDY(e.date)}
-                {e.time ? ` ${e.time}` : ""}
-              </span>
-            </span>
-          </li>
-        ))}
-      </ul>
-    );
-  })()}
+{Array.isArray(fredEconEvents) && fredEconEvents.length ? (
+  <ul className="space-y-1">
+    {fredEconEvents.map((e: any, i: number) => (
+      <li key={`ev-${i}`} className="flex gap-2">
+        <span className="mt-0.5">•</span>
+        <span>
+          {e.title} —{" "}
+          <span className="text-neutral-500">
+            {displayMDY(e.date)}
+            {e.time ? ` ${e.time}` : ""}
+          </span>
+        </span>
+      </li>
+    ))}
+  </ul>
+) : (
+  <div className="text-neutral-500 text-xs">
+    No macro events found in the next month (COMING SOON).
+  </div>
+)}
 </div>
                 {/* Headlines */}
 <div>
