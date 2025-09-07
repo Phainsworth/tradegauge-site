@@ -30,6 +30,14 @@ exports.handler = async (event) => {
     const r = await fetch(url);
     if (!r.ok) throw new Error(`FRED ${r.status}`);
     const j = await r.json();
+    // DEBUG: return a peek at the raw FRED payload
+if (event?.queryStringParameters?.debug === "1") {
+  return {
+    statusCode: 200,
+    headers,
+    body: JSON.stringify({ ok: true, sample: j.release_dates?.slice(0, 25) || null }),
+  };
+}
 
     const startMidnight = new Date(ymd(now) + "T00:00:00Z");
     const endMidnight = new Date(ymd(end) + "T23:59:59Z");
@@ -47,7 +55,7 @@ exports.handler = async (event) => {
       [/ISM/i, ["ISM", "MED"]],
     ];
 
-    const events = (j.release_dates || [])
+    const events = (j.releases || [])
       .map((rd) => ({ name: rd.release_name, at: new Date(rd.date + "T12:00:00Z") })) // noon placeholder
       .filter((e) => e.at >= startMidnight && e.at <= endMidnight)
       .map((e) => {
