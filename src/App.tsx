@@ -3983,33 +3983,40 @@ function toneForROI(roi?: number) {
                 </div>
 
 
-                {/* Macro upcoming */}
-                <div>
-                  <div className="text-neutral-400 text-xs uppercase tracking-widest mb-1">
-                    Upcoming
-                  </div>
-                  {econEvents.length ? (
-                    <ul className="space-y-1">
-                      {econEvents.map((e, i) => (
-                        <li key={`ev-${i}`} className="flex gap-2">
-                          <span className="mt-0.5">•</span>
-                          <span>
-                            {e.title} —{" "}
-                            <span className="text-neutral-500">
-                              {displayMDY(e.date)}
-                              {e.time ? ` ${e.time}` : ""}
-                            </span>
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-   console.log("FRED econEvents (UI)", Array.isArray(econEvents) ? econEvents.length : "not array", econEvents?.[0]);
-                    <div className="text-neutral-500 text-xs">
-                      No macro events found in the next month (COMING SOON).
-                    </div>
-                  )}
-                </div>
+   {/* Macro upcoming */}
+<div>
+  <div className="text-neutral-400 text-xs uppercase tracking-widest mb-1">
+    Upcoming
+  </div>
+
+  {/* DEBUG: what does the UI see? */}
+  {console.log(
+    "FRED econEvents (UI)",
+    Array.isArray(econEvents) ? econEvents.length : "not array",
+    econEvents?.[0]
+  )}
+
+  {Array.isArray(econEvents) && econEvents.length ? (
+    <ul className="space-y-1">
+      {econEvents.map((e, i) => (
+        <li key={`ev-${i}`} className="flex gap-2">
+          <span className="mt-0.5">•</span>
+          <span>
+            {e.title} —{" "}
+            <span className="text-neutral-500">
+              {displayMDY(e.date)}
+              {e.time ? ` ${e.time}` : ""}
+            </span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  ) : (
+    <div className="text-neutral-500 text-xs">
+      No macro events found in the next month (COMING SOON).
+    </div>
+  )}
+</div>
 
 
                 {/* Headlines */}
