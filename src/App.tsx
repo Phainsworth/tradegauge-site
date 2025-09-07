@@ -2318,34 +2318,27 @@ async function fetchEarnings(symbol: string) {
 }
 async function fetchUpcomingMacro() {
   try {
-    // Pull major US macro dates from our Netlify function (uses FRED)
     const r = await fetch("/.netlify/functions/fred-calendar?days=180", { cache: "no-store" });
     const j = await r.json();
 
-    const arr = Array.isArray(j?.events) ? j.events : [];
-    // Map into your existing EconEvent shape: { title, date, time? }
-    const events: { title: string; date: string; time?: string }[] = arr
-      .map((ev: any) => {
-        const iso = (ev?.at || "").toString();
+    const arr = Array.isArray(j && j.events) ? j.events : [];
+    const events = arr
+      .map((ev) => {
+        const iso = ev && ev.at ? String(ev.at) : "";
         const date = iso.slice(0, 10); // YYYY-MM-DD
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-        const title = (ev?.title || "Macro").toString();
-        const time = (ev?.time || "");
+        const title = ev && ev.title ? String(ev.title) : "Macro";
+        const time = ev && ev.time ? String(ev.time) : "";
         return { title, date, time };
       })
-      .filter(Boolean) as any[];
+      .filter(Boolean);
 
-    // Keep it tidy and near-term
     events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
     setFredEconEvents(events.slice(0, 20));
 
-    // Cache for render fallback
-    try {
-      localStorage.setItem("fredEventsCacheV1", JSON.stringify(events));
-    } catch {}
-    
-    // Debug so we can confirm variety
-    console.log("[FRED] set", events.length, "events — unique titles:", Array.from(new Set(events.map(e => e.title))));
+    try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(events)); } catch {}
+
+    console.log("[FRED] set", events.length, "events");
   } catch (e) {
     addDebug("fetchUpcomingMacro FRED error", e);
     setFredEconEvents([]);
