@@ -216,57 +216,6 @@ const setEconEvents = setFredEconEvents;
   const [earnings, setEarnings] = useState<Earnings | null>(null);
    useEffect(() => {
   let gone = false;
-
-  const pick = (j: any) =>
-    (Array.isArray(j?.events) ? j.events : [])
-      .map((ev: any) => {
-        const iso = (ev?.at || "").toString();
-        const date = iso.slice(0, 10); // YYYY-MM-DD
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-        const title = (ev?.title || "Macro").toString();
-        const time = (ev?.time || "");
-        return { title, date, time };
-      })
-      .filter(Boolean);
-
-  (async () => {
-    try {
-      const urls = [
-        "/.netlify/functions/fred-calendar?days=180",
-        "https://www.tradegauge.io/.netlify/functions/fred-calendar?days=180",
-        "https://tradegauge.io/.netlify/functions/fred-calendar?days=180",
-      ];
-
-      let best: Array<{ title: string; date: string; time?: string }> = [];
-
-      for (const u of urls) {
-        const r = await fetch(u, { cache: "no-store" });
-        console.log("[FRED] try", u, r.status);
-        const j = await r.json().catch(() => ({}));
-        const arr = pick(j);
-         console.log("[FRED] titles sample", Array.from(new Set(arr.map((e:any) => e.title))).slice(0, 12));
-        console.log("[FRED] found", arr.length, "from", u);
-        if (arr.length > best.length) best = arr;
-        if (best.length >= 10) break; // good enough
-      }
-
-      if (!gone && best.length) {
-        best.sort((a, b) =>
-          (a.date + (a.time || "")).localeCompare(b.date + (b.time || ""))
-        );
-        setFredEconEvents(best.slice(0, 20)); // show up to 20
-      } else if (!gone) {
-        setFredEconEvents([]);
-      }
-    } catch {
-      if (!gone) setFredEconEvents([]);
-    }
-  })();
-
-  return () => {
-    gone = true;
-  };
-}, []);
 // --- Patch notes (home screen only) ---
 const APP_VERSION = "v1.1";
 const PATCH_NOTES: Array<{ date: string; title: string; items: string[] }> = [
@@ -2370,7 +2319,7 @@ async function fetchEarnings(symbol: string) {
 async function fetchUpcomingMacro() {
   try {
     // Pull major US macro dates from our Netlify function (uses FRED)
-    const r = await fetch("/.netlify/functions/fred-calendar?days=120");
+    const r = await fetch("/.netlify/functions/fred-calendar?days=180", { cache: "no-store" });
     const j = await r.json();
 
     const arr = Array.isArray(j?.events) ? j.events : [];
@@ -2381,13 +2330,22 @@ async function fetchUpcomingMacro() {
         const date = iso.slice(0, 10); // YYYY-MM-DD
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
         const title = (ev?.title || "Macro").toString();
-        return { title, date };
+        const time = (ev?.time || "");
+        return { title, date, time };
       })
       .filter(Boolean) as any[];
 
     // Keep it tidy and near-term
     events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
-    setFredEconEvents(events.slice(0, 10));
+    setFredEconEvents(events.slice(0, 20));
+
+    // Cache for render fallback
+    try {
+      localStorage.setItem("fredEventsCacheV1", JSON.stringify(events));
+    } catch {}
+    
+    // Debug so we can confirm variety
+    console.log("[FRED] set", events.length, "events — unique titles:", Array.from(new Set(events.map(e => e.title))));
   } catch (e) {
     addDebug("fetchUpcomingMacro FRED error", e);
     setFredEconEvents([]);
