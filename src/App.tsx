@@ -202,7 +202,7 @@ const [quote, setQuote] = useState<{bid:string; ask:string; last:string; mark:st
   type EconEvent = { title: string; date: string; time?: string };
   type Earnings = { date: string; when?: string; confirmed?: boolean };
   const [headlines, setHeadlines] = useState<Headline[]>([]);
-  const [econEvents, setEconEvents] = useState<EconEvent[]>([]);
+  const [fredEconEvents, setFredEconEvents] = useState<any[]>([]);
   const [earnings, setEarnings] = useState<Earnings | null>(null);
    useEffect(() => {
   let gone = false;
@@ -227,10 +227,10 @@ const [quote, setQuote] = useState<{bid:string; ask:string; last:string; mark:st
           .slice(0, 10);
 
         console.log("[FRED] mapped", mapped.length, mapped[0]);
-        setEconEvents(mapped);
+        setFredEconEvents(mapped)
       } else {
         console.log("[FRED] no events or bad shape");
-        setEconEvents([]);
+        setFredEconEvents(mapped)
       }
     } catch (e) {
       console.error("[FRED] error", e);
@@ -4003,7 +4003,7 @@ function toneForROI(roi?: number) {
                 </div>
 
 
-   {/* Macro upcoming */}
+ {/* Macro upcoming */}
 <div>
   <div className="text-neutral-400 text-xs uppercase tracking-widest mb-1">
     Upcoming
@@ -4011,14 +4011,14 @@ function toneForROI(roi?: number) {
 
   {/* DEBUG: what does the UI see? */}
   {console.log(
-    "FRED econEvents (UI)",
-    Array.isArray(econEvents) ? econEvents.length : "not array",
-    econEvents?.[0]
+    "FRED fredEconEvents (UI)",
+    Array.isArray(fredEconEvents) ? fredEconEvents.length : "not array",
+    fredEconEvents?.[0]
   )}
 
-  {Array.isArray(econEvents) && econEvents.length ? (
+  {Array.isArray(fredEconEvents) && fredEconEvents.length ? (
     <ul className="space-y-1">
-      {econEvents.map((e, i) => (
+      {fredEconEvents.map((e, i) => (
         <li key={`ev-${i}`} className="flex gap-2">
           <span className="mt-0.5">•</span>
           <span>
@@ -4037,8 +4037,6 @@ function toneForROI(roi?: number) {
     </div>
   )}
 </div>
-
-
                 {/* Headlines */}
 <div>
   <div className="text-neutral-400 text-xs uppercase tracking-widest mb-1">
