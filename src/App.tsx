@@ -4004,8 +4004,8 @@ function toneForROI(roi?: number) {
                       ))}
                     </ul>
                   ) : (
+   console.log("FRED econEvents (UI)", Array.isArray(econEvents) ? econEvents.length : "not array", econEvents?.[0]);
                     <div className="text-neutral-500 text-xs">
-                       console.log("FRED econEvents (UI)", Array.isArray(econEvents) ? econEvents.length : "not array", econEvents?.[0]);
                       No macro events found in the next month (COMING SOON).
                     </div>
                   )}
