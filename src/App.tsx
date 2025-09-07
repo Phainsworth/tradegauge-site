@@ -244,6 +244,7 @@ const setEconEvents = setFredEconEvents;
         console.log("[FRED] try", u, r.status);
         const j = await r.json().catch(() => ({}));
         const arr = pick(j);
+         console.log("[FRED] titles sample", Array.from(new Set(arr.map((e:any) => e.title))).slice(0, 12));
         console.log("[FRED] found", arr.length, "from", u);
         if (arr.length > best.length) best = arr;
         if (best.length >= 10) break; // good enough
