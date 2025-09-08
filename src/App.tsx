@@ -2321,22 +2321,41 @@ async function fetchUpcomingMacro() {
     const r = await fetch("/.netlify/functions/fred-calendar?days=180", { cache: "no-store" });
     const j = await r.json();
 
-    const arr = Array.isArray(j && j.events) ? j.events : [];
-    const events = arr
-      .map((ev) => {
-        const iso = ev && ev.at ? String(ev.at) : "";
-        const date = iso.slice(0, 10); // YYYY-MM-DD
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-        const title = ev && ev.title ? String(ev.title) : "Macro";
-        const time = ev && ev.time ? String(ev.time) : "";
-        return { title, date, time };
-      })
-      .filter(Boolean);
+   // Normalize the response shape: prefer events[], but allow a raw array too
+const raw: any[] = Array.isArray((j as any)?.events)
+  ? (j as any).events
+  : Array.isArray(j)
+  ? (j as any)
+  : [];
 
-    events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
-    setFredEconEvents(events.slice(0, 20));
+// Map to {title, date, time}, tolerating different field names
+const events = raw
+  .map((ev: any) => {
+    const iso = String(
+      ev?.at || ev?.date || ev?.datetime || ev?.ts || ev?.timestamp || ""
+    );
 
-    try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(events)); } catch {}
+    // Pull YYYY-MM-DD if present
+    const dateMatch = /^\d{4}-\d{2}-\d{2}/.exec(iso);
+    const date = dateMatch ? dateMatch[0] : "";
+    if (!date) return null;
+
+    // Optional HH:MM from either explicit field or parsed iso
+    const time =
+      ev?.time ? String(ev.time) : (/\d{2}:\d{2}/.exec(iso)?.[0] ?? "");
+
+    const title = String(ev?.title || ev?.name || ev?.event || "Macro");
+    return { title, date, time };
+  })
+  .filter(Boolean as any)
+  .sort((a: any, b: any) =>
+    (a.date + (a.time || "")).localeCompare(b.date + (b.time || ""))
+  );
+
+// Keep a healthy list for the sidebar
+setFredEconEvents((events as any[]).slice(0, 50));
+
+    try { localStorage.setItem("fredEventsCacheV2", JSON.stringify(events)); } catch {}
 
     console.log("[FRED] set", events.length, "events");
   } catch (e) {
@@ -2394,92 +2413,8 @@ try {
 }
 
 
-    // Macro events: Finnhub economic calendar + overrides + optional external JSON
-    try {
-      const baseEvents: EconEvent[] = [];
-      if (FINNHUB_KEY) {
-        const from = toYMD_UTC(new Date());
-        const to = toYMD_UTC(new Date(Date.now() + 35 * 86_400_000));
-        const url = `https://finnhub.io/api/v1/calendar/economic?from=${from}&to=${to}&token=${FINNHUB_KEY}`;
-        const r = await fetch(url);
-        let arr: any[] = [];
-        if (r.ok) {
-          const j = await r.json();
-let raw: any[] =
-  (Array.isArray(j?.economicCalendar) && j.economicCalendar) ||
-  (Array.isArray(j?.economicCalendar?.result) && j.economicCalendar.result) ||
-  (Array.isArray(j?.economicCalendar?.data) && j.economicCalendar.data) ||
-  (Array.isArray(j?.economicCalendar?.events) && j.economicCalendar.events) ||
-  (Array.isArray(j?.result) && j.result) ||
-  (Array.isArray(j?.data) && j.data) ||
-  (Array.isArray(j?.events) && j.events) ||
-  [];
-
-// Fallback: if economicCalendar is an object with array children, grab them
-if (!raw.length && j?.economicCalendar && typeof j.economicCalendar === "object") {
-  const vals = Object.values(j.economicCalendar).filter(Array.isArray) as any[];
-  if (vals.length) raw = vals.flat();
-}
-arr = raw;
-        }
-        const keyWords = [
-  // Inflation
-  "cpi","consumer price index","core cpi","inflation",
-  "pce","core pce","personal consumption expenditures",
-  // Fed
-  "fomc","federal open market committee","federal reserve",
-  "powell","press conference","minutes","rate","interest",
-  // Labor
-  "nonfarm","payroll","jobs","unemployment","claims","jobless",
-  // ISM/PMI
-  "ism","pmi","manufacturing","services"
-];
-        const usish = (c?: string) => !c || /US|United States|USA/i.test(c);
-        for (const x of arr) {
-          const name = (x?.event || x?.title || x?.indicator || "").toString();
-          const country = (x?.country || x?.region || "").toString();
-          if (usish(country) && keyWords.some((k) => name.toLowerCase().includes(k))) {
-           const date = (/\d{4}-\d{2}-\d{2}/.exec(
-  (x?.date || x?.releaseDate || x?.nextRelease || x?.eventDate || x?.datetime || "").toString()
-)?.[0]) || "";
-const time = (/\b\d{2}:\d{2}\b/.exec(
-  (x?.time || x?.releaseTime || x?.datetime || "").toString()
-)?.[0]) || "";
-            baseEvents.push({ title: name, date, time });
-          }
-        }
-      }
-      // -- keep only future events (UTC-aware, same-day respects time) --
-const todayUTC = toYMD_UTC(new Date());           // "YYYY-MM-DD" in UTC
-const nowHM = new Date().toISOString().slice(11,16); // "HH:MM" in UTC
-
-const isFuture = (e: EconEvent) => {
-  if (!e?.date) return false;
-  if (e.date > todayUTC) return true;     // strictly future date
-  if (e.date < todayUTC) return false;    // past date
-  // same-day: if no time provided, keep it; else compare HH:MM
-  if (!e.time) return true;
-  return e.time >= nowHM;
-};
-
-// Overrides (kept empty or curated) → future only
-const extraA = MACRO_OVERRIDES.filter(isFuture);
-
-// Optional external curated feed (future filtered below)
-const extraB = await fetchExternalMacroJSON();
-
-// Merge → dedupe → future-only → sort → cap
-const merged = uniqueMacro([...baseEvents, ...extraA, ...extraB])
-  .filter(isFuture)
-  .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))
-  .slice(0, 10);
-
-setEconEvents(merged);
-    } catch (e) {
-      addDebug("fetchNews (macro) error", e);
-      setEconEvents(uniqueMacro(MACRO_OVERRIDES));
-    }
-  }
+/* Macro events are handled by FRED on app load (fetchUpcomingMacro).
+   We intentionally do NOT overwrite them per ticker anymore. */
 
 
   // -----------------------------
