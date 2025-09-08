@@ -377,7 +377,7 @@ function softResetForNewInput() {
   setInsights({ score: 0, advice: [], explainers: [] });
   setLlmStatus("");
   setHeadlines([]);
-  setEconEvents([]);
+ // setEconEvents([]);
   setEarnings(null);
 }
 // Probability of expiring ITM using IV + DTE (risk‑neutral, drift≈0)
@@ -2456,7 +2456,7 @@ if (name === "ticker" || name === "type" || name === "expiry") {
   setInsights({ score: 0, advice: [], explainers: [] });
   setLlmStatus("");
   setHeadlines([]);
-  setEconEvents([]);
+  //setEconEvents([]);
   setEarnings(null);
 }
 setSubmitted(false);
