@@ -3801,6 +3801,13 @@ const buildDangerWindows = (
 
     const fedCount = cleaned.filter((e) => /^FOMC\b/i.test(e.title) || /powell/i.test(e.title)).length;
     const macroCount = cleaned.length;
+     // --- timeline data ---
+    const horizon = 14;
+    const dayDots = Array.from({ length: horizon + 1 }, (_, i) => i);
+    const dangerWindows = buildDangerWindows(
+      cleaned.map((e) => ({ title: e.title, date: e.date })),
+      horizon
+    );
 
     return (
       <div className="space-y-3">
@@ -3820,7 +3827,45 @@ const buildDangerWindows = (
   {/* static “Alert” label (we can wire a real toggle later) */}
   <div className="text-xs text-neutral-400 select-none">Alert</div>
 </div>
+{/* dotted timeline with danger bands */}
+<div className="mt-1">
+  <div className="relative h-8">
+    {/* shaded danger bands */}
+    {dangerWindows.map((w, i) => {
+      const leftPct  = (w.start / horizon) * 100;
+      const widthPct = ((w.end - w.start + 1) / horizon) * 100; // inclusive
+      return (
+        <div
+          key={`dw-${i}`}
+          className="absolute top-1 bottom-1 rounded bg-red-500/15"
+          style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+        />
+      );
+    })}
 
+    {/* dashed baseline */}
+    <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px border-t border-dashed border-neutral-700/70" />
+
+    {/* day dots */}
+    <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-between px-2">
+      {dayDots.map((d, i) => (
+        <div
+          key={`dot-${i}`}
+          className={`w-2 h-2 rounded-full ${i === 0 ? "bg-emerald-300" : "bg-neutral-400/70"}`}
+          title={i === 0 ? "Now" : `Day ${i}`}
+        />
+      ))}
+    </div>
+
+    {/* labels */}
+    <div className="absolute left-0 -bottom-4 text-[10px] text-neutral-500">NOW</div>
+    {dangerWindows.length > 0 && (
+      <div className="absolute inset-x-0 -bottom-4 text-[10px] text-neutral-500 text-center">
+        Danger windows
+      </div>
+    )}
+  </div>
+</div>
 {/* list */}
 {(() => {
   // --- icons ---
