@@ -2306,28 +2306,32 @@ async function fetchEarnings(symbol: string) {
 }
 async function fetchUpcomingMacro() {
   try {
-    const r = await fetch("/.netlify/functions/fred-calendar?days=180", { cache: "no-store" });
-    const j: any = await r.json();
-    const arr: any[] = Array.isArray(j?.events) ? j.events : [];
+    const resp = await fetch("/.netlify/functions/fred-calendar?days=180", { cache: "no-store" });
+    const j = await resp.json();
+    const list = Array.isArray(j && j.events) ? j.events : [];
 
-    const events: EconEvent[] = arr
-      .map((ev: any) => {
-        const date = typeof ev?.at === "string" ? ev.at.slice(0, 10) : "";
+    const events = list
+      .map((ev) => {
+        const date = ev && ev.at ? String(ev.at).slice(0, 10) : "";
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-        const title = String(ev?.title ?? "Macro");
-        const time  = ev?.time ? String(ev.time) : "";
+        const title = ev && ev.title ? String(ev.title) : "Macro";
+        const time  = ev && ev.time ? String(ev.time) : "";
         return { title, date, time };
       })
-      .filter(Boolean) as EconEvent[];
+      .filter(Boolean);
 
     events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
-    setEconEvents(events.slice(0, 20));
+
+    // Be tolerant about which setter exists in this file
+    if (typeof setEconEvents === "function") setEconEvents(events.slice(0, 20));
+    else if (typeof setFredEconEvents === "function") setFredEconEvents(events.slice(0, 20));
 
     try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(events)); } catch {}
-    console.log("[FRED] set", events.length, "events — unique titles:", Array.from(new Set(events.map(e => e.title))));
-  } catch (e) {
-    addDebug("fetchUpcomingMacro FRED error", e);
-    setEconEvents([]);
+    console.log("[FRED] set", events.length, "events");
+  } catch (err) {
+    try { if (typeof addDebug === "function") addDebug("fetchUpcomingMacro FRED error", err); } catch {}
+    if (typeof setEconEvents === "function") setEconEvents([]);
+    else if (typeof setFredEconEvents === "function") setFredEconEvents([]);
   }
 }
 // Macro events: Finnhub economic calendar + overrides + optional external JSON
