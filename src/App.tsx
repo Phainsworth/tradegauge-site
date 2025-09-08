@@ -3713,13 +3713,22 @@ function renderTLDR() {
 
     return (
       <div className="space-y-3">
-        {/* header pills */}
-        <div className="flex flex-wrap gap-2 text-xs">
-          <span className="px-2 py-1 rounded-full bg-neutral-800/80">Macro <span className="font-semibold">{macroCount}</span> Events</span>
-          {fedCount > 0 && (
-            <span className="px-2 py-1 rounded-full bg-emerald-900/40 text-emerald-300">Fed <span className="font-semibold">{fedCount}</span></span>
-          )}
-        </div>
+{/* header pills (compact badges + Alert label on the right) */}
+<div className="flex items-center justify-between gap-3">
+  <div className="flex flex-wrap gap-2 text-xs">
+    <span className="px-2 py-1 rounded-full bg-neutral-800/80">
+      Macro <span className="font-semibold">{macroCount}</span> Events
+    </span>
+    {fedCount > 0 && (
+      <span className="px-2 py-1 rounded-full bg-emerald-900/40 text-emerald-300">
+        Fed <span className="font-semibold">{fedCount}</span>
+      </span>
+    )}
+  </div>
+
+  {/* static “Alert” label (we can wire a real toggle later) */}
+  <div className="text-xs text-neutral-400 select-none">Alert</div>
+</div>
 
         {/* list */}
         {cleaned.length ? (
