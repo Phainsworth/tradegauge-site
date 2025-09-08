@@ -2304,21 +2304,21 @@ async function fetchEarnings(symbol: string) {
     setEarnings(null);
   }
 }
-sync function fetchUpcomingMacro() {
+async function fetchUpcomingMacro() {
   try {
     const r = await fetch("/.netlify/functions/fred-calendar?days=180", { cache: "no-store" });
-    const j = await r.json();
-    const arr = Array.isArray(j && j.events) ? j.events : [];
+    const j: any = await r.json();
+    const arr: any[] = Array.isArray(j?.events) ? j.events : [];
 
-    const events = arr
-      .map((ev) => {
-        const date = ev && ev.at ? String(ev.at).slice(0, 10) : "";
+    const events: EconEvent[] = arr
+      .map((ev: any) => {
+        const date = typeof ev?.at === "string" ? ev.at.slice(0, 10) : "";
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-        const title = ev && ev.title ? String(ev.title) : "Macro";
-        const time = ev && ev.time ? String(ev.time) : "";
+        const title = String(ev?.title ?? "Macro");
+        const time  = ev?.time ? String(ev.time) : "";
         return { title, date, time };
       })
-      .filter(Boolean);
+      .filter(Boolean) as EconEvent[];
 
     events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
     setEconEvents(events.slice(0, 20));
@@ -2329,53 +2329,6 @@ sync function fetchUpcomingMacro() {
     addDebug("fetchUpcomingMacro FRED error", e);
     setEconEvents([]);
   }
-}
-  async function fetchNewsAndEvents(symbol: string) {
-    const tkr = symbol.toUpperCase().trim();
-
-
-// Headlines: Polygon → Finnhub fallback, then impact sort (via Netlify proxies)
-try {
-  let list: Headline[] = [];
-
-  // 1) Polygon via proxy
-  try {
-    const j = await poly(`/v2/reference/news?ticker=${encodeURIComponent(tkr)}&limit=30`);
-    const arr = Array.isArray((j as any)?.results) ? (j as any).results : [];
-    list = arr
-      .map((n: any) => ({
-        title: n?.title ?? "",
-        source: n?.publisher?.name ?? n?.publisher ?? "",
-        url: n?.article_url ?? n?.url ?? "",
-        ts: n?.published_utc ? Date.parse(n.published_utc) : undefined,
-      }))
-      .filter((h) => h.title);
-  } catch (err) {
-    addDebug("polygon news via proxy failed", err);
-  }
-
-  // 2) Finnhub fallback via proxy
-  if (!list.length) {
-    const from = toYMD_UTC(new Date(Date.now() - 5 * 86_400_000));
-    const to = toYMD_UTC(new Date());
-    const j2 = await finnhub(`/company-news?symbol=${encodeURIComponent(tkr)}&from=${from}&to=${to}`);
-    const arr2 = Array.isArray(j2) ? j2 : [];
-    list = arr2
-      .map((n: any) => ({
-        title: n?.headline ?? n?.title ?? "",
-        source: n?.source ?? "",
-        url: n?.url ?? "",
-        ts: n?.datetime ? n.datetime * 1000 : undefined,
-      }))
-      .filter((h) => h.title);
-  }
-
-  const scored = list.map((h) => ({ h, s: scoreHeadline(h, tkr) }));
-  scored.sort((a, b) => b.s - a.s || (b.h.ts || 0) - (a.h.ts || 0));
-  setHeadlines(scored.map((x) => x.h).slice(0, 10));
-} catch (e) {
-  addDebug("fetchNews (headlines) error", e);
-  setHeadlines([]);
 }
 // Macro events: Finnhub economic calendar + overrides + optional external JSON
     // Macro events: handled by always-on FRED feed (no-op stub kept for structure)
