@@ -4022,7 +4022,7 @@ const buildDangerWindows = (
 
           {/* NEWS & EVENTS */}
           <div className="grid grid-cols-1 md:grid-cols-1 gap-4 mt-4">
-            <MiniCard title="News & Events">
+            <MiniCard title="News">
               <div className="space-y-3 text-sm">
                 {/* Earnings */}
                 <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 flex items-center gap-3">
