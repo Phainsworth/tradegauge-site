@@ -2377,15 +2377,31 @@ events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time |
 events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
 
 // De-noise spammy releases:
-// - FOMC: keep only *rate decision* Wednesdays (day 2 of the 2-day meeting: Tue+Wed)
-// - Jobless Claims: keep only Thursdays
+// - FOMC: keep decision Wednesday (Tue+Wed meetings) OR explicit decision/presser/statement items
+// - Jobless Claims: keep Thursdays only
 const fomcDates = new Set(events.filter(e => /^FOMC\b/i.test(e.title)).map(e => e.date));
-const filtered = [];
+const filtered: any[] = [];
 let lastDecision: string | null = null;
 
 for (const e of events) {
-}
-    // Extra throttle: avoid accidental duplicates within ~2 weeks
+  // Local-noon weekday to avoid UTC shifting a US date back a day
+  const dow = new Date(e.date + "T12:00:00").getDay(); // 0=Sun..6=Sat
+
+  // ---- FOMC gating ----
+  if (/^FOMC\b/i.test(e.title) || /federal\s+reserve/i.test(e.title)) {
+    // Allow explicit decision/presser/statement variants even if Tue record missing
+    const explicitDecision = /(rate|decision|press|conference|statement|federal\s+funds\s+rate|dot\s+plot|sep)/i.test(e.title);
+
+    // Or allow the canonical decision Wednesday when Tuesday exists in the set
+    const prev = new Date(new Date(e.date).getTime() - 86400000).toISOString().slice(0, 10);
+    const isDecisionWed = dow === 3 && fomcDates.has(prev);
+
+    if (!(explicitDecision || isDecisionWed)) continue;
+
+    // Canonical time if missing (statement ~ 14:00 ET)
+    if (!e.time) e.time = "14:00";
+
+    // Throttle accidental duplicates within ~2 weeks
     if (lastDecision) {
       const diffDays = (new Date(e.date).getTime() - new Date(lastDecision).getTime()) / 86400000;
       if (diffDays < 14) continue;
@@ -2393,14 +2409,14 @@ for (const e of events) {
     lastDecision = e.date;
   }
 
-  if (/^Jobless Claims\b/i.test(e.title)) {
-    if (dow !== 4) continue; // Thu only
-  }
+  // ---- Jobless Claims: only keep Thursday rows ----
+  if (/^Jobless Claims\b/i.test(e.title) && dow !== 4) continue;
 
   filtered.push(e);
 }
 
-// Cap to the next 10 items
+// Sort, cap to the next 10, persist
+filtered.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
 const top = filtered.slice(0, 10);
 setEconEvents(top);
 
