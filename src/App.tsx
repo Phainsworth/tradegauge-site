@@ -3891,34 +3891,45 @@ const buildDangerWindows = (
             {/* dashed baseline */}
             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px border-t border-dashed border-neutral-700/70" />
 
-            {/* day dots (hover for details) */}
-            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-between px-2">
-              {dayDots.map((d) => {
-                const items = eventsByDay[d];
-                const hasEvents = items && items.length > 0;
-                const color = hasEvents ? colorForItems(items) : "bg-neutral-500/60";
-                return (
-                  <div key={`dot-${d}`} className="relative group">
-                    <div
-                      className={`w-2 h-2 rounded-full ${d === 0 ? "bg-neutral-200" : color}`}
-                      title={d === 0 ? "Now" : `Day ${d}`}
-                    />
-                    {/* tooltip */}
-                    {hasEvents && (
-                      <div className="absolute left-1/2 -translate-x-1/2 -translate-y-full -top-2 hidden group-hover:block bg-neutral-900 text-neutral-200 text-[11px] leading-tight rounded-md shadow-xl border border-neutral-800 px-2 py-1 whitespace-nowrap z-10">
-                        {items.slice(0, 4).map((ev, j) => (
-                          <div key={j} className="flex gap-1 items-center">
-                            <span className="opacity-60">•</span>
-                            <span>{ev.title}</span>
-                          </div>
-                        ))}
-                        {items.length > 4 && <div className="opacity-60">+{items.length - 4} more…</div>}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+{/* day dots (hover to see date + events, or “no news”) */}
+<div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-between px-2">
+  {dayDots.map((d) => {
+    const items = eventsByDay[d];
+    const hasEvents = items && items.length > 0;
+    const color = hasEvents ? colorForItems(items) : "bg-neutral-500/60";
+    const dateLabel = dateForOffset(d);
+
+    return (
+      <div key={`dot-${d}`} className="relative group">
+        <div
+          className={`w-2 h-2 rounded-full ${d === 0 ? "bg-neutral-200" : color}`}
+          title={dateLabel}
+          aria-label={dateLabel}
+        />
+        {/* unified tooltip for ALL days */}
+        <div className="absolute left-1/2 -translate-x-1/2 -translate-y-full -top-2 hidden group-hover:block bg-neutral-900 text-neutral-200 text-[11px] leading-tight rounded-md shadow-xl border border-neutral-800 px-2 py-1 whitespace-nowrap z-10">
+          <div className="font-medium text-neutral-100 mb-0.5">{dateLabel}</div>
+
+          {hasEvents ? (
+            <>
+              {items.slice(0, 4).map((ev, j) => (
+                <div key={j} className="flex gap-1 items-center">
+                  <span className="opacity-60">•</span>
+                  <span>{ev.title}</span>
+                </div>
+              ))}
+              {items.length > 4 && (
+                <div className="opacity-60">+{items.length - 4} more…</div>
+              )}
+            </>
+          ) : (
+            <div className="opacity-70">No major news expected</div>
+          )}
+        </div>
+      </div>
+    );
+  })}
+</div>
 
             {/* labels */}
             <div className="absolute left-0 -bottom-4 text-[10px] text-neutral-500">NOW</div>
