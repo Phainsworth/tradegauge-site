@@ -2305,16 +2305,16 @@ async function fetchEarnings(symbol: string) {
   }
 }
 // Always-on macro feed (independent of ticker)
-// Always-on macro feed (independent of ticker) — via Netlify proxy
 async function fetchUpcomingMacro() {
   try {
     const r = await fetch("/.netlify/functions/fred-calendar?days=180", { cache: "no-store" });
-    const j = await r.json();
+    const j: any = await r.json();
     const arr: any[] = Array.isArray(j?.events) ? j.events : [];
 
     const events: EconEvent[] = arr
       .map((ev: any) => {
-        const date = typeof ev?.at === "string" ? ev.at.slice(0, 10) : "";
+        const at = typeof ev?.at === "string" ? ev.at : "";
+        const date = at.slice(0, 10); // YYYY-MM-DD
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null as any;
         const title = String(ev?.title ?? "Macro");
         const time  = ev?.time ? String(ev.time) : "";
@@ -2326,7 +2326,7 @@ async function fetchUpcomingMacro() {
     setEconEvents(events.slice(0, 20));
 
     try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(events)); } catch {}
-    console.log("[FRED] set", events.length, "events");
+    console.log("[FRED] set", events.length, "events — unique titles:", Array.from(new Set(events.map(e => e.title))));
   } catch (e) {
     addDebug("fetchUpcomingMacro FRED error", e);
     setEconEvents([]);
