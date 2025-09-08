@@ -2444,6 +2444,9 @@ try {
   addDebug("fetchNews (headlines) error", e);
   setHeadlines([]);
 }
+  }
+
+
   // -----------------------------
   // INPUT + EFFECTS
   // -----------------------------
