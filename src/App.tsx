@@ -632,6 +632,7 @@ function buildDangerWindows(
       const title = (x?.title || x?.name || x?.event || "").toString();
       return { title, date, time };
     }).filter(e => e.title && e.date);
+     
   } catch {
     return [];
   }
@@ -3775,37 +3776,42 @@ const buildDangerWindows = (
   return merged;
 };
 
-    // --- source data ---
+// --- source data ---
     const macros = safeArr(econEvents);
 
-    // keep only the next 14d; keep only decision-day FOMC (your fetchUpcomingMacro already throttles,
-    // but we harden once more here just in case)
-    const fomcSet = new Set(macros.filter((e) => /^FOMC\b/i.test(e.title)).map((e) => e.date));
+    // risky-only filter: keep just market movers; drop claims
+    const RISKY_RE =
+      /(FOMC|Federal\s+Reserve|Rate\s+Decision|CPI|Core\s+CPI|PCE|Core\s+PCE|PPI|Retail\s+Sales)/i;
+
+    // Pre-compute: if we keep FOMC, prefer the actual rate-decision (Wed) when the prior day exists.
+    const fomcSet = new Set(
+      macros.filter((e) => /^FOMC\b/i.test(e.title)).map((e) => e.date)
+    );
+
     const cleaned = macros
       .filter((e) => inNextN(e, withinDays))
+      .filter((e) => RISKY_RE.test(e.title) && !/jobless|claims/i.test(e.title))
       .filter((e) => {
+        // only keep FOMC decision day (Wed) when Tuesday exists
         if (/^FOMC\b/i.test(e.title)) {
           const dt = new Date(`${e.date}T00:00:00Z`);
           const isWed = dt.getUTCDay() === 3;
           const prev = new Date(dt.getTime() - 86400000).toISOString().slice(0, 10);
-          return isWed && fomcSet.has(prev); // keep only Wed (decision) when Tue exists
-        }
-        if (/^Jobless Claims\b/i.test(e.title)) {
-          const dt = new Date(`${e.date}T00:00:00Z`);
-          return dt.getUTCDay() === 4; // Thu only
+          return isWed && fomcSet.has(prev);
         }
         return true;
       })
       .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))
       .slice(0, 10); // cap to next 10
 
-    const fedCount = cleaned.filter((e) => /^FOMC\b/i.test(e.title) || /powell/i.test(e.title)).length;
+    const fedCount   = cleaned.filter((e) => /^FOMC\b/i.test(e.title) || /powell/i.test(e.title)).length;
     const macroCount = cleaned.length;
-// --- timeline data ---
+
+    // --- timeline data ---
     const horizon = 14;
     const dayDots = Array.from({ length: horizon + 1 }, (_, i) => i);
 
-    // Build per-day event list for hover tooltips
+    // Bucket events per day for hover tooltips
     const eventsByDay: Record<number, { title: string; time?: string }[]> = {};
     for (const d of dayDots) eventsByDay[d] = [];
     for (const e of cleaned) {
@@ -3814,23 +3820,21 @@ const buildDangerWindows = (
         eventsByDay[d].push({ title: e.title, time: e.time });
       }
     }
-    // Only draw dots for days that actually have events
-    const dotDays = dayDots.filter((d) => eventsByDay[d]?.length > 0);
 
-    // Pick a color per day based on highest-risk item title
+    // Dot color by highest-risk item on that day
     const colorForItems = (items: { title: string }[]) => {
       const t = (s: string) => s.toLowerCase();
-      // rank by severity (tweak as you like)
       const has = (k: string) => items.some((it) => t(it.title).includes(k));
-      if (has("cpi")) return "bg-red-400";          // highest risk
-      if (has("fomc") || has("powell")) return "bg-amber-300";
-      if (has("ppi")) return "bg-orange-300";
-      if (has("earnings")) return "bg-pink-300";
-      if (has("retail")) return "bg-yellow-300";
-      if (has("jobs") || has("jobless") || has("claims")) return "bg-blue-300";
-      return "bg-neutral-300"; // fallback
+      if (has("cpi") || has("pce") || has("rate decision") || has("fomc") || has("federal reserve")) {
+        return "bg-red-400";    // big
+      }
+      if (has("ppi") || has("retail sales")) {
+        return "bg-yellow-300"; // medium
+      }
+      return "bg-neutral-400";  // fallback (shouldn’t hit often due to filter)
     };
 
+    // Danger windows (merged shaded bands)
     const dangerWindows = buildDangerWindows(
       cleaned.map((e) => ({ title: e.title, date: e.date })),
       horizon
@@ -3838,74 +3842,74 @@ const buildDangerWindows = (
 
     return (
       <div className="space-y-3">
-{/* header pills (compact badges + Alert label on the right) */}
-<div className="flex items-center justify-between gap-3">
-  <div className="flex flex-wrap gap-2 text-xs">
-    <span className="px-2 py-1 rounded-full bg-neutral-800/80">
-      Macro <span className="font-semibold">{macroCount}</span> Events
-    </span>
-    {fedCount > 0 && (
-      <span className="px-2 py-1 rounded-full bg-emerald-900/40 text-emerald-300">
-        Fed <span className="font-semibold">{fedCount}</span>
-      </span>
-    )}
-  </div>
-
-  {/* static “Alert” label (we can wire a real toggle later) */}
-  <div className="text-xs text-neutral-400 select-none">IMPACT</div>
-</div>
-{/* dotted timeline with danger bands + hoverable dots */}
-<div className="mt-1">
-  <div className="relative h-10">
-    {/* shaded danger bands */}
-    {dangerWindows.map((w, i) => {
-      const leftPct  = (w.start / horizon) * 100;
-      const widthPct = ((w.end - w.start + 1) / horizon) * 100; // inclusive
-      return (
-        <div
-          key={`dw-${i}`}
-          className="absolute top-2 bottom-2 rounded bg-red-500/15"
-          style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-        />
-      );
-    })}
-
-    {/* dashed baseline */}
-    <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px border-t border-dashed border-neutral-700/70" />
-
-    {/* day dots (hover for details) */}
-    <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-between px-2">
-      {dayDots.map((d, i) => {
-        const items = eventsByDay[d];
-        const hasEvents = items && items.length > 0;
-        return (
-          <div key={`dot-${i}`} className="relative group">
-            <div
-              className={`w-2 h-2 rounded-full ${i === 0 ? "bg-emerald-300" : hasEvents ? "bg-neutral-100" : "bg-neutral-500/60"}`}
-              title={i === 0 ? "Now" : `Day ${i}`}
-            />
-            {/* tooltip */}
-            {hasEvents && (
-              <div className="absolute left-1/2 -translate-x-1/2 -translate-y-full -top-2 hidden group-hover:block bg-neutral-900 text-neutral-200 text-[11px] leading-tight rounded-md shadow-xl border border-neutral-800 px-2 py-1 whitespace-nowrap z-10">
-                {items.slice(0, 4).map((ev, j) => (
-                  <div key={j} className="flex gap-1 items-center">
-                    <span className="opacity-60">•</span>
-                    <span>{ev.title}</span>
-                  </div>
-                ))}
-                {items.length > 4 && <div className="opacity-60">+{items.length - 4} more…</div>}
-              </div>
+        {/* header pills (compact badges + Impact label) */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="px-2 py-1 rounded-full bg-neutral-800/80">
+              Macro <span className="font-semibold">{macroCount}</span> Events
+            </span>
+            {fedCount > 0 && (
+              <span className="px-2 py-1 rounded-full bg-emerald-900/40 text-emerald-300">
+                Fed <span className="font-semibold">{fedCount}</span>
+              </span>
             )}
           </div>
-        );
-      })}
-    </div>
+          <div className="text-xs text-neutral-400 select-none">IMPACT</div>
+        </div>
 
-    {/* labels */}
-    <div className="absolute left-0 -bottom-4 text-[10px] text-neutral-500">NOW</div>
-    <div className="absolute right-0 -bottom-4 text-[10px] text-neutral-500">+14d</div>
-  </div>
-</div>
+        {/* dotted timeline with danger bands + hoverable dots */}
+        <div className="mt-1">
+          <div className="relative h-10">
+            {/* shaded danger bands */}
+            {dangerWindows.map((w, i) => {
+              const leftPct  = (w.start / horizon) * 100;
+              const widthPct = ((w.end - w.start + 1) / horizon) * 100; // inclusive
+              return (
+                <div
+                  key={`dw-${i}`}
+                  className="absolute top-2 bottom-2 rounded bg-red-500/15"
+                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                />
+              );
+            })}
+
+            {/* dashed baseline */}
+            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px border-t border-dashed border-neutral-700/70" />
+
+            {/* day dots (hover for details) */}
+            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-between px-2">
+              {dayDots.map((d) => {
+                const items = eventsByDay[d];
+                const hasEvents = items && items.length > 0;
+                const color = hasEvents ? colorForItems(items) : "bg-neutral-500/60";
+                return (
+                  <div key={`dot-${d}`} className="relative group">
+                    <div
+                      className={`w-2 h-2 rounded-full ${d === 0 ? "bg-neutral-200" : color}`}
+                      title={d === 0 ? "Now" : `Day ${d}`}
+                    />
+                    {/* tooltip */}
+                    {hasEvents && (
+                      <div className="absolute left-1/2 -translate-x-1/2 -translate-y-full -top-2 hidden group-hover:block bg-neutral-900 text-neutral-200 text-[11px] leading-tight rounded-md shadow-xl border border-neutral-800 px-2 py-1 whitespace-nowrap z-10">
+                        {items.slice(0, 4).map((ev, j) => (
+                          <div key={j} className="flex gap-1 items-center">
+                            <span className="opacity-60">•</span>
+                            <span>{ev.title}</span>
+                          </div>
+                        ))}
+                        {items.length > 4 && <div className="opacity-60">+{items.length - 4} more…</div>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* labels */}
+            <div className="absolute left-0 -bottom-4 text-[10px] text-neutral-500">NOW</div>
+            <div className="absolute right-0 -bottom-4 text-[10px] text-neutral-500">+14d</div>
+          </div>
+        </div>
 {/* list */}
 {(() => {
   // --- icons ---
