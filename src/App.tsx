@@ -3730,36 +3730,111 @@ function renderTLDR() {
   <div className="text-xs text-neutral-400 select-none">Alert</div>
 </div>
 
-        {/* list */}
-        {cleaned.length ? (
-          <ul className="divide-y divide-neutral-800/60">
-            {cleaned.map((e, i) => {
-              const { days, hours } = diffDH(mkDate(e));
-              const [lvl, cls] = riskBadge(e.title);
-              return (
-                <li key={`radar-${i}`} className="py-2 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-2 h-2 rounded-full bg-neutral-500" />
-                    <div className="text-sm">
-                      <div className="font-medium">{e.title}</div>
-                      <div className="text-xs text-neutral-500">
-                        {displayMDY(e.date)}
-                        {e.time ? ` • ${e.time} ET` : ""}
-                        {days >= 0 ? ` • in ${days}d${hours > 0 ? ` ${hours}h` : ""}` : ""}
-                      </div>
-                    </div>
+{/* list */}
+{(() => {
+  // --- icons ---
+  const iconFor = (title: string) => {
+    const t = title.toLowerCase();
+    const base = "w-4 h-4 shrink-0 text-neutral-300";
+
+    // Microphone — Powell speech
+    if (t.includes("powell") || t.includes("speech")) {
+      return (
+        <svg viewBox="0 0 24 24" className={base} fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M15 11V7a3 3 0 10-6 0v4a3 3 0 006 0z"/>
+          <path d="M19 11a7 7 0 01-14 0"/>
+          <path d="M12 18v3"/>
+        </svg>
+      );
+    }
+
+    // Bank — FOMC / Fed
+    if (t.startsWith("fomc") || t.includes("federal funds") || t.includes("fed")) {
+      return (
+        <svg viewBox="0 0 24 24" className={base} fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M3 10l9-6 9 6M4 10h16"/>
+          <path d="M5 10v8M9 10v8M13 10v8M19 10v8"/>
+          <path d="M3 18h18"/>
+        </svg>
+      );
+    }
+
+    // Gauge — CPI / PCE
+    if (t.startsWith("cpi") || t.includes("personal income") || t.includes("pce")) {
+      return (
+        <svg viewBox="0 0 24 24" className={base} fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M4 14a8 8 0 0116 0"/>
+          <path d="M12 14l3-3" strokeLinecap="round"/>
+          <circle cx="12" cy="14" r="1.2" fill="currentColor"/>
+        </svg>
+      );
+    }
+
+    // Factory — PPI
+    if (t.startsWith("ppi")) {
+      return (
+        <svg viewBox="0 0 24 24" className={base} fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M3 20V9l6 4V9l6 4V9l6 4v7H3z"/>
+          <path d="M7 15h2M11 17h2M15 15h2"/>
+        </svg>
+      );
+    }
+
+    // Shopping bag — Retail Sales
+    if (t.includes("retail sales")) {
+      return (
+        <svg viewBox="0 0 24 24" className={base} fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M6 8h12l-1 12H7L6 8z"/>
+          <path d="M9 8a3 3 0 016 0"/>
+        </svg>
+      );
+    }
+
+    // Bars — Jobless Claims
+    if (t.startsWith("jobless") || t.includes("claims")) {
+      return (
+        <svg viewBox="0 0 24 24" className={base} fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M5 20v-3M10 20v-6M15 20v-9M20 20v-12"/>
+        </svg>
+      );
+    }
+
+    // fallback dot
+    return <div className="w-2 h-2 rounded-full bg-neutral-500" />;
+  };
+
+  if (cleaned.length) {
+    return (
+      <ul className="divide-y divide-neutral-800/60">
+        {cleaned.map((e, i) => {
+          const { days, hours } = diffDH(mkDate(e));
+          const [lvl, cls] = riskBadge(e.title);
+          return (
+            <li key={`radar-${i}`} className="py-2 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {iconFor(e.title)}
+                <div className="text-sm">
+                  <div className="font-medium">{e.title}</div>
+                  <div className="text-xs text-neutral-500">
+                    {displayMDY(e.date)}
+                    {e.time ? ` • ${e.time} ET` : ""}
+                    {days >= 0 ? ` • in ${days}d${hours > 0 ? ` ${hours}h` : ""}` : ""}
                   </div>
-                  <span className={`text-[10px] px-2 py-1 rounded ${cls}`}>{lvl}</span>
-                </li>
-              );
-            })}
-          </ul>
-        ) : (
-          <div className="text-neutral-500 text-sm">No macro events in the next 14 days.</div>
-        )}
-      </div>
+                </div>
+              </div>
+              <span className={`text-[10px] px-2 py-1 rounded ${cls}`}>{lvl}</span>
+            </li>
+          );
+        })}
+      </ul>
     );
-  })()}
+  } else {
+    return <div className="text-neutral-500 text-sm">No macro events in the next 14 days.</div>;
+  }
+})()}
+</div>
+);
+})()}
 </MiniCard>
 
           </div>
