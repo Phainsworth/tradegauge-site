@@ -3814,6 +3814,22 @@ const buildDangerWindows = (
         eventsByDay[d].push({ title: e.title, time: e.time });
       }
     }
+    // Only draw dots for days that actually have events
+    const dotDays = dayDots.filter((d) => eventsByDay[d]?.length > 0);
+
+    // Pick a color per day based on highest-risk item title
+    const colorForItems = (items: { title: string }[]) => {
+      const t = (s: string) => s.toLowerCase();
+      // rank by severity (tweak as you like)
+      const has = (k: string) => items.some((it) => t(it.title).includes(k));
+      if (has("cpi")) return "bg-red-400";          // highest risk
+      if (has("fomc") || has("powell")) return "bg-amber-300";
+      if (has("ppi")) return "bg-orange-300";
+      if (has("earnings")) return "bg-pink-300";
+      if (has("retail")) return "bg-yellow-300";
+      if (has("jobs") || has("jobless") || has("claims")) return "bg-blue-300";
+      return "bg-neutral-300"; // fallback
+    };
 
     const dangerWindows = buildDangerWindows(
       cleaned.map((e) => ({ title: e.title, date: e.date })),
