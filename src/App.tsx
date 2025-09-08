@@ -3801,9 +3801,20 @@ const buildDangerWindows = (
 
     const fedCount = cleaned.filter((e) => /^FOMC\b/i.test(e.title) || /powell/i.test(e.title)).length;
     const macroCount = cleaned.length;
-     // --- timeline data ---
+// --- timeline data ---
     const horizon = 14;
     const dayDots = Array.from({ length: horizon + 1 }, (_, i) => i);
+
+    // Build per-day event list for hover tooltips
+    const eventsByDay: Record<number, { title: string; time?: string }[]> = {};
+    for (const d of dayDots) eventsByDay[d] = [];
+    for (const e of cleaned) {
+      const d = daysFromNow(e.date);
+      if (d >= 0 && d <= horizon) {
+        eventsByDay[d].push({ title: e.title, time: e.time });
+      }
+    }
+
     const dangerWindows = buildDangerWindows(
       cleaned.map((e) => ({ title: e.title, date: e.date })),
       horizon
@@ -3825,11 +3836,11 @@ const buildDangerWindows = (
   </div>
 
   {/* static “Alert” label (we can wire a real toggle later) */}
-  <div className="text-xs text-neutral-400 select-none">Alert</div>
+  <div className="text-xs text-neutral-400 select-none">IMPACT</div>
 </div>
-{/* dotted timeline with danger bands */}
+{/* dotted timeline with danger bands + hoverable dots */}
 <div className="mt-1">
-  <div className="relative h-8">
+  <div className="relative h-10">
     {/* shaded danger bands */}
     {dangerWindows.map((w, i) => {
       const leftPct  = (w.start / horizon) * 100;
@@ -3837,7 +3848,7 @@ const buildDangerWindows = (
       return (
         <div
           key={`dw-${i}`}
-          className="absolute top-1 bottom-1 rounded bg-red-500/15"
+          className="absolute top-2 bottom-2 rounded bg-red-500/15"
           style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
         />
       );
@@ -3846,24 +3857,37 @@ const buildDangerWindows = (
     {/* dashed baseline */}
     <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px border-t border-dashed border-neutral-700/70" />
 
-    {/* day dots */}
+    {/* day dots (hover for details) */}
     <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-between px-2">
-      {dayDots.map((d, i) => (
-        <div
-          key={`dot-${i}`}
-          className={`w-2 h-2 rounded-full ${i === 0 ? "bg-emerald-300" : "bg-neutral-400/70"}`}
-          title={i === 0 ? "Now" : `Day ${i}`}
-        />
-      ))}
+      {dayDots.map((d, i) => {
+        const items = eventsByDay[d];
+        const hasEvents = items && items.length > 0;
+        return (
+          <div key={`dot-${i}`} className="relative group">
+            <div
+              className={`w-2 h-2 rounded-full ${i === 0 ? "bg-emerald-300" : hasEvents ? "bg-neutral-100" : "bg-neutral-500/60"}`}
+              title={i === 0 ? "Now" : `Day ${i}`}
+            />
+            {/* tooltip */}
+            {hasEvents && (
+              <div className="absolute left-1/2 -translate-x-1/2 -translate-y-full -top-2 hidden group-hover:block bg-neutral-900 text-neutral-200 text-[11px] leading-tight rounded-md shadow-xl border border-neutral-800 px-2 py-1 whitespace-nowrap z-10">
+                {items.slice(0, 4).map((ev, j) => (
+                  <div key={j} className="flex gap-1 items-center">
+                    <span className="opacity-60">•</span>
+                    <span>{ev.title}</span>
+                  </div>
+                ))}
+                {items.length > 4 && <div className="opacity-60">+{items.length - 4} more…</div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
 
     {/* labels */}
     <div className="absolute left-0 -bottom-4 text-[10px] text-neutral-500">NOW</div>
-    {dangerWindows.length > 0 && (
-      <div className="absolute inset-x-0 -bottom-4 text-[10px] text-neutral-500 text-center">
-        Danger windows
-      </div>
-    )}
+    <div className="absolute right-0 -bottom-4 text-[10px] text-neutral-500">+14d</div>
   </div>
 </div>
 {/* list */}
