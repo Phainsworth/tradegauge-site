@@ -2308,91 +2308,27 @@ async function fetchEarnings(symbol: string) {
 // Always-on macro feed (independent of ticker) — via Netlify proxy
 async function fetchUpcomingMacro() {
   try {
-    // Collect normalized events here
-    const baseEvents: any[] = [];
+    const r = await fetch("/.netlify/functions/fred-calendar?days=180", { cache: "no-store" });
+    const j = await r.json();
+    const arr: any[] = Array.isArray(j?.events) ? j.events : [];
 
-    // 60d window (UTC)
-    const from = toYMD_UTC(new Date());
-    const to = toYMD_UTC(new Date(Date.now() + 60 * 86_400_000));
+    const events: EconEvent[] = arr
+      .map((ev: any) => {
+        const date = typeof ev?.at === "string" ? ev.at.slice(0, 10) : "";
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null as any;
+        const title = String(ev?.title ?? "Macro");
+        const time  = ev?.time ? String(ev.time) : "";
+        return { title, date, time };
+      })
+      .filter(Boolean) as EconEvent[];
 
-    // Call Finnhub through the proxy (no FINNHUB_KEY in browser)
-    const j: any = await finnhub(`/calendar/economic?from=${from}&to=${to}`);
+    events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+    setEconEvents(events.slice(0, 20));
 
-    // Robust array extraction across possible shapes
-    let raw: any[] =
-      (Array.isArray(j?.economicCalendar) && j.economicCalendar) ||
-      (Array.isArray(j?.economicCalendar?.result) && j.economicCalendar.result) ||
-      (Array.isArray(j?.economicCalendar?.data) && j.economicCalendar.data) ||
-      (Array.isArray(j?.economicCalendar?.events) && j.economicCalendar.events) ||
-      (Array.isArray(j?.result) && j.result) ||
-      (Array.isArray(j?.data) && j.data) ||
-      (Array.isArray(j?.events) && j.events) ||
-      [];
-
-    // If it's an object of arrays, flatten values
-    if (!raw.length && j?.economicCalendar && typeof j.economicCalendar === "object") {
-      const vals = Object.values(j.economicCalendar).filter(Array.isArray) as any[];
-      if (vals.length) raw = vals.flat();
-    }
-
-    // Normalize into a consistent shape for your UI
-    const norm = (raw as any[]).map((x: any) => {
-      const dateStr =
-        (x?.date || x?.releaseDate || x?.reportDate || x?.day || "")
-          .toString()
-          .slice(0, 10);
-
-      // Some feeds include a time field; keep it if present
-      const timeStr = (x?.time || x?.hour || "").toString();
-      const eventName = (x?.event || x?.title || x?.indicator || "").toString();
-
-      // Importance / impact normalization
-      const impactRaw = (x?.importance || x?.impact || "").toString().toLowerCase();
-      const impact =
-        impactRaw === "high" || impactRaw === "medium" || impactRaw === "low"
-          ? impactRaw
-          : impactRaw.includes("high")
-          ? "high"
-          : impactRaw.includes("med")
-          ? "medium"
-          : impactRaw.includes("low")
-          ? "low"
-          : undefined;
-
-      const country = (x?.country || x?.region || "").toString().toUpperCase();
-
-      // Timestamp for sorting (assume midnight UTC if no time)
-      const ts = Date.parse(dateStr ? `${dateStr}T00:00:00Z` : "");
-
-      return {
-        key: `${dateStr}|${eventName}`,
-        date: dateStr || undefined,
-        time: timeStr || undefined,
-        event: eventName || "(Unnamed event)",
-        impact,
-        country,
-        ts: Number.isFinite(ts) ? ts : undefined,
-      };
-    });
-
-    // Filter obvious junk, sort by (date desc = soonest first), then by impact
-    const impactRank: Record<string, number> = { high: 3, medium: 2, low: 1 };
-    const cleaned = norm
-      .filter((e) => e.date && e.event)
-      .sort((a, b) => {
-        const t = (a.ts || 0) - (b.ts || 0);
-        if (t !== 0) return t;
-        const ia = impactRank[a.impact as string] || 0;
-        const ib = impactRank[b.impact as string] || 0;
-        return ib - ia; // higher impact first if same day
-      });
-
-    // Optional: keep top N for UI brevity
-    for (const ev of cleaned.slice(0, 50)) baseEvents.push(ev);
-
-    setEconEvents(baseEvents);
+    try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(events)); } catch {}
+    console.log("[FRED] set", events.length, "events");
   } catch (e) {
-    addDebug("fetchUpcomingMacro error", e);
+    addDebug("fetchUpcomingMacro FRED error", e);
     setEconEvents([]);
   }
 }
