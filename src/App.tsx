@@ -2470,6 +2470,12 @@ useEffect(() => {
   return () => clearInterval(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
+
+   // >>> add this watcher right here <<<
+useEffect(() => {
+  console.log("[DEBUG] econEvents length =", econEvents.length, econEvents.slice(0, 5));
+}, [econEvents]);
+// <<< end watcher >>>
   // Expirations when ticker changes
   useEffect(() => {
     if (!form.ticker.trim()) return;
