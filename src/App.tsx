@@ -2322,8 +2322,36 @@ async function fetchUpcomingMacro() {
       })
       .filter(Boolean) as EconEvent[];
 
-    events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
-    setEconEvents(events.slice(0, 20));
+    // Sort ascending
+events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+
+// De-noise spammy releases:
+// - FOMC: keep only Wednesdays, max 1 per 7 days
+// - Jobless Claims: keep only Thursdays
+const filtered: typeof events = [];
+let lastFOMC: string | null = null;
+
+for (const e of events) {
+  const dow = new Date(e.date + "T00:00:00Z").getUTCDay(); // 0=Sun..6=Sat
+
+  if (/^FOMC\b/i.test(e.title)) {
+    if (dow !== 3) continue; // Wed only
+    if (lastFOMC) {
+      const diffDays = (new Date(e.date).getTime() - new Date(lastFOMC).getTime()) / 86400000;
+      if (diffDays < 7) continue; // throttle to ≤ 1 per week
+    }
+    lastFOMC = e.date;
+  }
+
+  if (/^Jobless Claims\b/i.test(e.title)) {
+    if (dow !== 4) continue; // Thu only
+  }
+
+  filtered.push(e);
+}
+
+setEconEvents(filtered.slice(0, 20));
+try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(filtered)); } catch {}
 
     try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(events)); } catch {}
     console.log("[FRED] set", events.length, "events — unique titles:", Array.from(new Set(events.map(e => e.title))));
