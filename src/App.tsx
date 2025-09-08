@@ -2384,17 +2384,6 @@ const filtered = [];
 let lastDecision: string | null = null;
 
 for (const e of events) {
-  // Use local noon so weekday math doesn’t shift the date
-const dow = new Date(e.date + "T12:00:00").getDay(); // 0=Sun..6=Sat (local)
-
-if (/^FOMC\b/i.test(e.title)) {
-  // Keep ONLY if it's the Wednesday of a Tue+Wed meeting (prev day exists in FOMC set)
-  const prev = new Date(new Date(e.date).getTime() - 86400000).toISOString().slice(0, 10);
-  const isDecisionWed = dow === 3 && fomcDates.has(prev);
-  if (!isDecisionWed) continue;
-
-  // Canonical time: 14:00 (statement)
-  if (!e.time) e.time = "14:00";
 }
     // Extra throttle: avoid accidental duplicates within ~2 weeks
     if (lastDecision) {
