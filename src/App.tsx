@@ -3430,7 +3430,7 @@ function renderTLDR() {
     </div>
 
     {/* Watch-outs */}
-    <div className="rounded-2xl ring-1 ring-amber-400/70 shadow-[0_0_20px_-10px_rgba(245,158,11,0.55)]">
+    <div className="rounded-2xl ring-1 ring-red-400/70 shadow-[0_0_20px_-10px_rgba(245,158,11,0.55)]">
       <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
         <div className="text-sm font-semibold text-neutral-200 mb-2">What to watch out for</div>
         <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
