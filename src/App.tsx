@@ -2384,16 +2384,17 @@ const filtered = [];
 let lastDecision: string | null = null;
 
 for (const e of events) {
-  const dow = new Date(e.date + "T00:00:00Z").getUTCDay(); // 0=Sun..6=Sat
+  // Use local noon so weekday math doesn’t shift the date
+const dow = new Date(e.date + "T12:00:00").getDay(); // 0=Sun..6=Sat (local)
 
-  if (/^FOMC\b/i.test(e.title)) {
-    // Keep ONLY if it's the Wednesday of a Tue+Wed meeting (prev day exists in FOMC set)
-    const prev = new Date(new Date(e.date).getTime() - 86400000).toISOString().slice(0, 10);
-    const isDecisionWed = dow === 3 && fomcDates.has(prev);
-    if (!isDecisionWed) continue;
+if (/^FOMC\b/i.test(e.title)) {
+  // Keep ONLY if it's the Wednesday of a Tue+Wed meeting (prev day exists in FOMC set)
+  const prev = new Date(new Date(e.date).getTime() - 86400000).toISOString().slice(0, 10);
+  const isDecisionWed = dow === 3 && fomcDates.has(prev);
+  if (!isDecisionWed) continue;
 
-    // Canonical time: 14:00 (statement)
-    if (!e.time) e.time = "14:00";
+  // Canonical time: 14:00 (statement)
+  if (!e.time) e.time = "14:00";
 
     // Extra throttle: avoid accidental duplicates within ~2 weeks
     if (lastDecision) {
@@ -3707,11 +3708,12 @@ function renderTLDR() {
     const now = new Date();
     const withinDays = 14;
 
-const mkDate = (e: any) => {
-  const t = e?.time && /^\d{2}:\d{2}$/.test(e.time) ? e.time : "12:00";
-  // Local time at midday → avoids UTC off-by-one on the dots & timers
-  return new Date(`${e.date}T${t}:00`);
-};
+if (/^FOMC\b/i.test(e.title)) {
+  const dt = new Date(`${e.date}T12:00:00`);   // local noon
+  const isWed = dt.getDay() === 3;             // local weekday
+  // If you still want to throttle to “decision Wednesday”, keep just Wed
+  return isWed;
+}
     const diffDH = (d: Date) => {
       const ms = d.getTime() - now.getTime();
       const days = Math.floor(ms / 86400000);
