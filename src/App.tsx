@@ -2304,36 +2304,235 @@ async function fetchEarnings(symbol: string) {
     setEarnings(null);
   }
 }
+// Always-on macro feed (independent of ticker)
+// Always-on macro feed (independent of ticker) — via Netlify proxy
 async function fetchUpcomingMacro() {
   try {
-    const resp = await fetch("/.netlify/functions/fred-calendar?days=180", { cache: "no-store" });
-    const j = await resp.json();
-    const list = Array.isArray(j && j.events) ? j.events : [];
+    // Collect normalized events here
+    const baseEvents: any[] = [];
 
-    const events = list
-      .map((ev) => {
-        const date = ev && ev.at ? String(ev.at).slice(0, 10) : "";
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-        const title = ev && ev.title ? String(ev.title) : "Macro";
-        const time  = ev && ev.time ? String(ev.time) : "";
-        return { title, date, time };
-      })
-      .filter(Boolean);
+    // 60d window (UTC)
+    const from = toYMD_UTC(new Date());
+    const to = toYMD_UTC(new Date(Date.now() + 60 * 86_400_000));
 
-    events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+    // Call Finnhub through the proxy (no FINNHUB_KEY in browser)
+    const j: any = await finnhub(`/calendar/economic?from=${from}&to=${to}`);
 
-    // Be tolerant about which setter exists in this file
-    if (typeof setEconEvents === "function") setEconEvents(events.slice(0, 20));
-    else if (typeof setFredEconEvents === "function") setFredEconEvents(events.slice(0, 20));
+    // Robust array extraction across possible shapes
+    let raw: any[] =
+      (Array.isArray(j?.economicCalendar) && j.economicCalendar) ||
+      (Array.isArray(j?.economicCalendar?.result) && j.economicCalendar.result) ||
+      (Array.isArray(j?.economicCalendar?.data) && j.economicCalendar.data) ||
+      (Array.isArray(j?.economicCalendar?.events) && j.economicCalendar.events) ||
+      (Array.isArray(j?.result) && j.result) ||
+      (Array.isArray(j?.data) && j.data) ||
+      (Array.isArray(j?.events) && j.events) ||
+      [];
 
-    try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(events)); } catch {}
-    console.log("[FRED] set", events.length, "events");
-  } catch (err) {
-    try { if (typeof addDebug === "function") addDebug("fetchUpcomingMacro FRED error", err); } catch {}
-    if (typeof setEconEvents === "function") setEconEvents([]);
-    else if (typeof setFredEconEvents === "function") setFredEconEvents([]);
+    // If it's an object of arrays, flatten values
+    if (!raw.length && j?.economicCalendar && typeof j.economicCalendar === "object") {
+      const vals = Object.values(j.economicCalendar).filter(Array.isArray) as any[];
+      if (vals.length) raw = vals.flat();
+    }
+
+    // Normalize into a consistent shape for your UI
+    const norm = (raw as any[]).map((x: any) => {
+      const dateStr =
+        (x?.date || x?.releaseDate || x?.reportDate || x?.day || "")
+          .toString()
+          .slice(0, 10);
+
+      // Some feeds include a time field; keep it if present
+      const timeStr = (x?.time || x?.hour || "").toString();
+      const eventName = (x?.event || x?.title || x?.indicator || "").toString();
+
+      // Importance / impact normalization
+      const impactRaw = (x?.importance || x?.impact || "").toString().toLowerCase();
+      const impact =
+        impactRaw === "high" || impactRaw === "medium" || impactRaw === "low"
+          ? impactRaw
+          : impactRaw.includes("high")
+          ? "high"
+          : impactRaw.includes("med")
+          ? "medium"
+          : impactRaw.includes("low")
+          ? "low"
+          : undefined;
+
+      const country = (x?.country || x?.region || "").toString().toUpperCase();
+
+      // Timestamp for sorting (assume midnight UTC if no time)
+      const ts = Date.parse(dateStr ? `${dateStr}T00:00:00Z` : "");
+
+      return {
+        key: `${dateStr}|${eventName}`,
+        date: dateStr || undefined,
+        time: timeStr || undefined,
+        event: eventName || "(Unnamed event)",
+        impact,
+        country,
+        ts: Number.isFinite(ts) ? ts : undefined,
+      };
+    });
+
+    // Filter obvious junk, sort by (date desc = soonest first), then by impact
+    const impactRank: Record<string, number> = { high: 3, medium: 2, low: 1 };
+    const cleaned = norm
+      .filter((e) => e.date && e.event)
+      .sort((a, b) => {
+        const t = (a.ts || 0) - (b.ts || 0);
+        if (t !== 0) return t;
+        const ia = impactRank[a.impact as string] || 0;
+        const ib = impactRank[b.impact as string] || 0;
+        return ib - ia; // higher impact first if same day
+      });
+
+    // Optional: keep top N for UI brevity
+    for (const ev of cleaned.slice(0, 50)) baseEvents.push(ev);
+
+    setEconEvents(baseEvents);
+  } catch (e) {
+    addDebug("fetchUpcomingMacro error", e);
+    setEconEvents([]);
   }
 }
+
+  async function fetchNewsAndEvents(symbol: string) {
+    const tkr = symbol.toUpperCase().trim();
+
+
+// Headlines: Polygon → Finnhub fallback, then impact sort (via Netlify proxies)
+try {
+  let list: Headline[] = [];
+
+  // 1) Polygon via proxy
+  try {
+    const j = await poly(`/v2/reference/news?ticker=${encodeURIComponent(tkr)}&limit=30`);
+    const arr = Array.isArray((j as any)?.results) ? (j as any).results : [];
+    list = arr
+      .map((n: any) => ({
+        title: n?.title ?? "",
+        source: n?.publisher?.name ?? n?.publisher ?? "",
+        url: n?.article_url ?? n?.url ?? "",
+        ts: n?.published_utc ? Date.parse(n.published_utc) : undefined,
+      }))
+      .filter((h) => h.title);
+  } catch (err) {
+    addDebug("polygon news via proxy failed", err);
+  }
+
+  // 2) Finnhub fallback via proxy
+  if (!list.length) {
+    const from = toYMD_UTC(new Date(Date.now() - 5 * 86_400_000));
+    const to = toYMD_UTC(new Date());
+    const j2 = await finnhub(`/company-news?symbol=${encodeURIComponent(tkr)}&from=${from}&to=${to}`);
+    const arr2 = Array.isArray(j2) ? j2 : [];
+    list = arr2
+      .map((n: any) => ({
+        title: n?.headline ?? n?.title ?? "",
+        source: n?.source ?? "",
+        url: n?.url ?? "",
+        ts: n?.datetime ? n.datetime * 1000 : undefined,
+      }))
+      .filter((h) => h.title);
+  }
+
+  const scored = list.map((h) => ({ h, s: scoreHeadline(h, tkr) }));
+  scored.sort((a, b) => b.s - a.s || (b.h.ts || 0) - (a.h.ts || 0));
+  setHeadlines(scored.map((x) => x.h).slice(0, 10));
+} catch (e) {
+  addDebug("fetchNews (headlines) error", e);
+  setHeadlines([]);
+}
+
+
+    // Macro events: Finnhub economic calendar + overrides + optional external JSON
+    try {
+      const baseEvents: EconEvent[] = [];
+      if (FINNHUB_KEY) {
+        const from = toYMD_UTC(new Date());
+        const to = toYMD_UTC(new Date(Date.now() + 35 * 86_400_000));
+        const url = `https://finnhub.io/api/v1/calendar/economic?from=${from}&to=${to}&token=${FINNHUB_KEY}`;
+        const r = await fetch(url);
+        let arr: any[] = [];
+        if (r.ok) {
+          const j = await r.json();
+let raw: any[] =
+  (Array.isArray(j?.economicCalendar) && j.economicCalendar) ||
+  (Array.isArray(j?.economicCalendar?.result) && j.economicCalendar.result) ||
+  (Array.isArray(j?.economicCalendar?.data) && j.economicCalendar.data) ||
+  (Array.isArray(j?.economicCalendar?.events) && j.economicCalendar.events) ||
+  (Array.isArray(j?.result) && j.result) ||
+  (Array.isArray(j?.data) && j.data) ||
+  (Array.isArray(j?.events) && j.events) ||
+  [];
+
+// Fallback: if economicCalendar is an object with array children, grab them
+if (!raw.length && j?.economicCalendar && typeof j.economicCalendar === "object") {
+  const vals = Object.values(j.economicCalendar).filter(Array.isArray) as any[];
+  if (vals.length) raw = vals.flat();
+}
+arr = raw;
+        }
+        const keyWords = [
+  // Inflation
+  "cpi","consumer price index","core cpi","inflation",
+  "pce","core pce","personal consumption expenditures",
+  // Fed
+  "fomc","federal open market committee","federal reserve",
+  "powell","press conference","minutes","rate","interest",
+  // Labor
+  "nonfarm","payroll","jobs","unemployment","claims","jobless",
+  // ISM/PMI
+  "ism","pmi","manufacturing","services"
+];
+        const usish = (c?: string) => !c || /US|United States|USA/i.test(c);
+        for (const x of arr) {
+          const name = (x?.event || x?.title || x?.indicator || "").toString();
+          const country = (x?.country || x?.region || "").toString();
+          if (usish(country) && keyWords.some((k) => name.toLowerCase().includes(k))) {
+           const date = (/\d{4}-\d{2}-\d{2}/.exec(
+  (x?.date || x?.releaseDate || x?.nextRelease || x?.eventDate || x?.datetime || "").toString()
+)?.[0]) || "";
+const time = (/\b\d{2}:\d{2}\b/.exec(
+  (x?.time || x?.releaseTime || x?.datetime || "").toString()
+)?.[0]) || "";
+            baseEvents.push({ title: name, date, time });
+          }
+        }
+      }
+      // -- keep only future events (UTC-aware, same-day respects time) --
+const todayUTC = toYMD_UTC(new Date());           // "YYYY-MM-DD" in UTC
+const nowHM = new Date().toISOString().slice(11,16); // "HH:MM" in UTC
+
+const isFuture = (e: EconEvent) => {
+  if (!e?.date) return false;
+  if (e.date > todayUTC) return true;     // strictly future date
+  if (e.date < todayUTC) return false;    // past date
+  // same-day: if no time provided, keep it; else compare HH:MM
+  if (!e.time) return true;
+  return e.time >= nowHM;
+};
+
+// Overrides (kept empty or curated) → future only
+const extraA = MACRO_OVERRIDES.filter(isFuture);
+
+// Optional external curated feed (future filtered below)
+const extraB = await fetchExternalMacroJSON();
+
+// Merge → dedupe → future-only → sort → cap
+const merged = uniqueMacro([...baseEvents, ...extraA, ...extraB])
+  .filter(isFuture)
+  .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))
+  .slice(0, 10);
+
+setEconEvents(merged);
+    } catch (e) {
+      addDebug("fetchNews (macro) error", e);
+      setEconEvents(uniqueMacro(MACRO_OVERRIDES));
+    }
+  }
+
 
   // -----------------------------
   // INPUT + EFFECTS
@@ -2549,7 +2748,11 @@ setGreeks({
     src: "Tradier",
   });
 }
+console.log("[QUOTE UI STATE]", snap?.quoteNum, "→", { bid: snap?.quoteNum?.bid?.toFixed?.(2), ask: snap?.quoteNum?.ask?.toFixed?.(2), last: snap?.quoteNum?.last?.toFixed?.(2), mark: snap?.quoteNum?.mark?.toFixed?.(2) });
+
       await Promise.all([fetchNewsAndEvents(form.ticker), fetchEarnings(form.ticker)]);
+
+
 await analyzeWithAI({
   greeksOverride: snap?.numericGreeks ?? undefined,
   contractOverride: snap?.contract,
@@ -3314,7 +3517,7 @@ function renderTLDR() {
     </div>
 
     {/* Watch-outs */}
-    <div className="rounded-2xl ring-1 ring-red-400/70 shadow-[0_0_20px_-10px_rgba(245,158,11,0.55)]">
+    <div className="rounded-2xl ring-1 ring-amber-400/70 shadow-[0_0_20px_-10px_rgba(245,158,11,0.55)]">
       <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
         <div className="text-sm font-semibold text-neutral-200 mb-2">What to watch out for</div>
         <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
