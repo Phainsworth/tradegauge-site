@@ -3652,248 +3652,106 @@ function renderTLDR() {
             </MiniCard>
 
 
-            {/* QUICK STATS -> REPLACED WITH EXPIRY SCENARIOS */}
-<MiniCard title="Expiry Scenarios">
+          <MiniCard title="Event Radar (Next 14 Days)">
   {(() => {
-    const s0 = Number.isFinite(parsed.spot) ? parsed.spot : NaN;
-    const k2 = Number.isFinite(parsed.strike) ? parsed.strike : NaN;
-    const paidOk = Number.isFinite(paid) && paid > 0;
+    // --- helpers ---
+    const safeArr = (x: any) => (Array.isArray(x) ? x : []);
+    const now = new Date();
+    const withinDays = 14;
 
-    if (!Number.isFinite(s0) || !Number.isFinite(k2)) {
-      return (
-        <div className="text-neutral-500 text-sm">
-          Pick a contract to see P/L scenarios at expiry.
-        </div>
-      );
-    }
+    const mkDate = (e: any) => {
+      const t = e?.time && /^\d{2}:\d{2}$/.test(e.time) ? e.time : "00:00";
+      // treat as UTC so ordering is stable
+      return new Date(`${e.date}T${t}:00Z`);
+    };
+    const diffDH = (d: Date) => {
+      const ms = d.getTime() - now.getTime();
+      const days = Math.floor(ms / 86400000);
+      const hours = Math.floor((ms % 86400000) / 3600000);
+      return { days, hours };
+    };
+    const inNextN = (e: any, n: number) => {
+      const dt = mkDate(e);
+      const ms = dt.getTime() - now.getTime();
+      return ms >= 0 && ms <= n * 86400000;
+    };
+    const riskBadge = (title: string) => {
+      const t = title.toLowerCase();
+      if (t.startsWith("cpi") || t.includes("personal income") || t.includes("pce")) return ["HIGH", "bg-red-900/40 text-red-300"];
+      if (t.startsWith("fomc") || t.includes("powell")) return ["MED", "bg-amber-900/40 text-amber-300"];
+      if (t.includes("retail sales") || t.startsWith("ppi")) return ["MED", "bg-amber-900/40 text-amber-300"];
+      if (t.startsWith("jobless") || t.includes("claims")) return ["LOW", "bg-neutral-800 text-neutral-300"];
+      return ["—", "bg-neutral-800 text-neutral-400"];
+    };
 
-    // -------- knobs --------
-const dollarStep = Math.max(0.01, +((s0) * 0.02).toFixed(2)); // 2% of spot, min $0.01
-const stepsEachSide = 4;   // rows each side of spot (baseline window)
-// -----------------------
+    // --- source data ---
+    const macros = safeArr(econEvents);
 
-// Make sure the table includes a small band around the *strike* as well,
-// so you always see some non-zero intrinsic rows even if spot is far OTM.
-const minSpot = s0 - stepsEachSide * dollarStep;
-const maxSpot = s0 + stepsEachSide * dollarStep;
+    // keep only the next 14d; keep only decision-day FOMC (your fetchUpcomingMacro already throttles,
+    // but we harden once more here just in case)
+    const fomcSet = new Set(macros.filter((e) => /^FOMC\b/i.test(e.title)).map((e) => e.date));
+    const cleaned = macros
+      .filter((e) => inNextN(e, withinDays))
+      .filter((e) => {
+        if (/^FOMC\b/i.test(e.title)) {
+          const dt = new Date(`${e.date}T00:00:00Z`);
+          const isWed = dt.getUTCDay() === 3;
+          const prev = new Date(dt.getTime() - 86400000).toISOString().slice(0, 10);
+          return isWed && fomcSet.has(prev); // keep only Wed (decision) when Tue exists
+        }
+        if (/^Jobless Claims\b/i.test(e.title)) {
+          const dt = new Date(`${e.date}T00:00:00Z`);
+          return dt.getUTCDay() === 4; // Thu only
+        }
+        return true;
+      })
+      .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))
+      .slice(0, 10); // cap to next 10
 
-// Ensure we extend the window to cover strike ± 3 steps too
-let lo = Math.min(minSpot, k2 - 3 * dollarStep);
-let hi = Math.max(maxSpot, k2 + 3 * dollarStep);
+    const fedCount = cleaned.filter((e) => /^FOMC\b/i.test(e.title) || /powell/i.test(e.title)).length;
+    const macroCount = cleaned.length;
 
-// Safety: keep bounds sensible
-if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo >= hi) {
-  lo = Math.min(s0, k2) - 3 * dollarStep;
-  hi = Math.max(s0, k2) + 3 * dollarStep;
-}
-
-const isCallLocal = isCall;
-const be = paidOk ? (isCallLocal ? k2 + paid : k2 - paid) : NaN;
-
-const intrinsicAt = (S: number) =>
-  Math.max(0, isCallLocal ? S - k2 : k2 - S) * 100; // per contract $
-
-function makeRow(S: number) {
-  const value = +intrinsicAt(S).toFixed(2);
-  const hasPaid = paidOk;
-  const paidCents = hasPaid ? paid * 100 : NaN;
-  const pl = hasPaid ? +(value - paidCents).toFixed(2) : undefined;
-  const roi =
-    hasPaid && paidCents > 0
-      ? +(((value - paidCents) / paidCents) * 100).toFixed(0)
-      : undefined;
-  return { kind: "normal" as const, S: +S.toFixed(2), value, pl, roi };
-}
-
-// Build rows from lo..hi in $1 steps (aligned so S includes exact strike if possible)
-const baseRows: Array<{ kind: "normal"; S: number; value: number; pl?: number; roi?: number }> = [];
-for (let S = lo; S <= hi + 1e-9; S += dollarStep) {
-  baseRows.push(makeRow(S));
-}
-
-// Insert breakeven row if within window (and not already present)
-if (paidOk && Number.isFinite(be) && be >= lo - 1e-6 && be <= hi + 1e-6) {
-  const beRow = makeRow(be);
-  const exists = baseRows.some((r) => Math.abs(r.S - beRow.S) < 0.005);
-  if (!exists) baseRows.push({ ...beRow, kind: "normal" });
-}
-
-// Sort by S
-baseRows.sort((a, b) => a.S - b.S);
-
-// Collapse all zero-value rows into one — but only if there’s at least
-// one non-zero row in the table. If *all* rows are zero, keep them as-is
-// (so users still see the sampled levels rather than a single row).
-const anyNonZero = baseRows.some((r) => r.value !== 0);
-let rows: Array<
-  { kind: "normal" | "collapsed" | "breakeven"; S: number; label?: string; value: number; pl?: number; roi?: number }
-> = [...baseRows];
-
-if (anyNonZero) {
-  const nonZero = rows.filter((r) => r.value !== 0);
-  const collapsedLabel = isCallLocal ? `≤ ${fmt(k2)}` : `≥ ${fmt(k2)}`;
-  const collapsedRow = {
-    kind: "collapsed" as const,
-    S: k2,
-    label: collapsedLabel,
-    value: 0,
-    pl: paidOk ? -(paid * 100) : undefined,
-    roi: paidOk ? -100 : undefined,
-  };
-  rows = [...nonZero, collapsedRow].sort((a, b) => a.S - b.S);
-}
-
-// Mark breakeven
-rows = rows.map((r) => {
-  if (!paidOk || r.pl === undefined) return r;
-  if (Math.abs(r.pl) <= 0.5) return { ...r, kind: "breakeven" as const };
-  return r;
-});
-
-const fmtSigned = (n: number) => `${n >= 0 ? "+" : ""}${fmt(n)}`;
-
-// ROI-based tone scaling
-function toneForROI(roi?: number) {
-  if (roi === undefined || !Number.isFinite(roi)) return "text-neutral-400";
-  if (roi <= -80) return "text-rose-500";
-  if (roi <= -40) return "text-rose-400";
-  if (roi < 0)   return "text-rose-300";
-  if (roi === 0) return "text-neutral-300";
-  if (roi < 40)  return "text-green-300";
-  if (roi < 80)  return "text-green-400";
-  return "text-green-500"; // 80%+
-}
-
-    // ===== POP CALC =====
-    function normalCdf(x: number) {
-      const t = 1 / (1 + 0.2316419 * Math.abs(x));
-      const d = 0.3989423 * Math.exp((-x * x) / 2);
-      let p =
-        1 -
-        d *
-          t *
-          (0.3193815 +
-            t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
-      return x < 0 ? 1 - p : p;
-    }
-    const clamp = (n: number, lo: number, hi: number) =>
-      Math.max(lo, Math.min(hi, n));
-
-    let pop: number | null = null;
-    let method: "iv" | "delta" | null = null;
-
-    const ivPct =
-      greeks.iv && greeks.iv !== "—"
-        ? Number(String(greeks.iv).replace("%", ""))
-        : null;
-
-    if (
-      Number.isFinite(s0) &&
-      Number.isFinite(k2) &&
-      Number.isFinite(daysToExpiry) &&
-      (ivPct ?? null) !== null &&
-      daysToExpiry > 0 &&
-      (ivPct as number) > 0
-    ) {
-      const sigma = (ivPct as number) / 100;
-      const T = Math.max(1e-6, daysToExpiry / 365);
-      const denom = sigma * Math.sqrt(T);
-      if (denom > 0) {
-        const d2 = (Math.log(s0 / k2) - 0.5 * sigma * sigma * T) / denom;
-        const p = isCallLocal ? normalCdf(d2) : normalCdf(-d2);
-        pop = Math.round(p * 100);
-        method = "iv";
-      }
-    }
-    if (pop === null) {
-      const d =
-        greeks.delta !== "—" && Number.isFinite(Number(greeks.delta))
-          ? Number(greeks.delta)
-          : NaN;
-      if (Number.isFinite(d)) {
-        const p = isCallLocal ? clamp(d, 0, 1) : clamp(-d, 0, 1);
-        pop = Math.round(p * 100);
-        method = "delta";
-      }
-    }
-    const popTone =
-      pop === null
-        ? "text-neutral-500"
-        : pop >= 60
-        ? "text-green-300"
-        : pop >= 40
-        ? "text-yellow-300"
-        : "text-rose-300";
-
-    // ===== RENDER =====
     return (
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="text-neutral-400 text-xs uppercase tracking-widest">
-            <tr>
-              <th className="text-left py-1.5">Underlying (Spot)</th>
-              <th className="text-right py-1.5">Option Value</th>
-              <th className="text-right py-1.5">P/L</th>
-              <th className="text-right py-1.5">ROI</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-neutral-800">
-            {rows.map((r, i) => {
-              const isBE = r.kind === "breakeven";
-              const rowBg = isBE ? "bg-neutral-800/40" : i % 2 ? "bg-transparent" : "bg-neutral-900/30";
-              const plTone = r.pl === undefined ? "text-neutral-400" : toneForROI(r.roi);
-              const roiText =
-                r.roi === undefined ? "—" : `${r.roi >= 0 ? "+" : ""}${r.roi}%`;
+      <div className="space-y-3">
+        {/* header pills */}
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="px-2 py-1 rounded-full bg-neutral-800/80">Macro <span className="font-semibold">{macroCount}</span> Events</span>
+          {fedCount > 0 && (
+            <span className="px-2 py-1 rounded-full bg-emerald-900/40 text-emerald-300">Fed <span className="font-semibold">{fedCount}</span></span>
+          )}
+        </div>
 
+        {/* list */}
+        {cleaned.length ? (
+          <ul className="divide-y divide-neutral-800/60">
+            {cleaned.map((e, i) => {
+              const { days, hours } = diffDH(mkDate(e));
+              const [lvl, cls] = riskBadge(e.title);
               return (
-                <tr key={`${r.kind}-${r.S}-${i}`} className={rowBg}>
-                  <td className="py-1.5">
-                    {r.kind === "collapsed" ? (
-                      <span className="text-neutral-400">{r.label}</span>
-                    ) : (
-                      <span className={isBE ? "font-semibold text-neutral-100" : "text-neutral-300"}>
-                        {fmt(r.S)}
-                      </span>
-                    )}
-                    {isBE && (
-                      <span className="ml-2 px-1.5 py-0.5 text-[10px] rounded bg-neutral-800 border border-neutral-700">
-                        Breakeven
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-1.5 text-right">{fmt(r.value)}</td>
-                  <td className={`py-1.5 text-right ${plTone}`}>
-                    {r.pl === undefined ? "—" : fmtSigned(r.pl)}
-                  </td>
-                  <td className={`py-1.5 text-right ${plTone}`}>{roiText}</td>
-                </tr>
+                <li key={`radar-${i}`} className="py-2 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-2 h-2 rounded-full bg-neutral-500" />
+                    <div className="text-sm">
+                      <div className="font-medium">{e.title}</div>
+                      <div className="text-xs text-neutral-500">
+                        {displayMDY(e.date)}
+                        {e.time ? ` • ${e.time} ET` : ""}
+                        {days >= 0 ? ` • in ${days}d${hours > 0 ? ` ${hours}h` : ""}` : ""}
+                      </div>
+                    </div>
+                  </div>
+                  <span className={`text-[10px] px-2 py-1 rounded ${cls}`}>{lvl}</span>
+                </li>
               );
             })}
-          </tbody>
-        </table>
-        <div className="text-[11px] text-neutral-500 mt-2">
-          Intrinsic value at expiry only (ignores time value/IV).
-          <span className="ml-2">
-            {pop === null ? (
-              "Estimated POP unavailable (need IV or delta)."
-            ) : (
-              <>
-                Estimated POP (ITM at expiry):{" "}
-                <span className={popTone}>{pop}%</span>
-                <span className="text-neutral-500">
-                  {" "}
-                  ({method === "iv" ? "IV-based" : "delta proxy"})
-                </span>
-                .
-              </>
-            )}
-          </span>
-        </div>
+          </ul>
+        ) : (
+          <div className="text-neutral-500 text-sm">No macro events in the next 14 days.</div>
+        )}
       </div>
     );
   })()}
 </MiniCard>
-
 
           </div>
 
