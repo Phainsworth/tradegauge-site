@@ -3707,11 +3707,11 @@ function renderTLDR() {
     const now = new Date();
     const withinDays = 14;
 
-    const mkDate = (e: any) => {
-      const t = e?.time && /^\d{2}:\d{2}$/.test(e.time) ? e.time : "00:00";
-      // treat as UTC so ordering is stable
-      return new Date(`${e.date}T${t}:00Z`);
-    };
+const mkDate = (e: any) => {
+  const t = e?.time && /^\d{2}:\d{2}$/.test(e.time) ? e.time : "12:00";
+  // Local time at midday → avoids UTC off-by-one on the dots & timers
+  return new Date(`${e.date}T${t}:00`);
+};
     const diffDH = (d: Date) => {
       const ms = d.getTime() - now.getTime();
       const days = Math.floor(ms / 86400000);
