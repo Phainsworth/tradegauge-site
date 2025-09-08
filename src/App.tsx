@@ -202,20 +202,8 @@ const [quote, setQuote] = useState<{bid:string; ask:string; last:string; mark:st
   type EconEvent = { title: string; date: string; time?: string };
   type Earnings = { date: string; when?: string; confirmed?: boolean };
   const [headlines, setHeadlines] = useState<Headline[]>([]);
-const [fredEconEvents, setFredEconEvents] = useState<EconEvent[]>([]);
-   useEffect(() => {
-  if (!Array.isArray(fredEconEvents) || fredEconEvents.length === 0) {
-    try {
-      const cached = localStorage.getItem("fredEventsCacheV1");
-      if (cached) setFredEconEvents(JSON.parse(cached));
-    } catch {}
-  }
-}, []); // run once on mount
-const econEvents = fredEconEvents;
-const setEconEvents = setFredEconEvents;
+  const [econEvents, setEconEvents] = useState<EconEvent[]>([]);
   const [earnings, setEarnings] = useState<Earnings | null>(null);
-   useEffect(() => {
-  let gone = false;
 // --- Patch notes (home screen only) ---
 const APP_VERSION = "v1.1";
 const PATCH_NOTES: Array<{ date: string; title: string; items: string[] }> = [
@@ -389,7 +377,7 @@ function softResetForNewInput() {
   setInsights({ score: 0, advice: [], explainers: [] });
   setLlmStatus("");
   setHeadlines([]);
-  // setEconEvents([]); // keep macro events; global, not tied to input
+  setEconEvents([]);
   setEarnings(null);
 }
 // Probability of expiring ITM using IV + DTE (risk‑neutral, drift≈0)
@@ -2316,51 +2304,96 @@ async function fetchEarnings(symbol: string) {
     setEarnings(null);
   }
 }
+// Always-on macro feed (independent of ticker)
+// Always-on macro feed (independent of ticker) — via Netlify proxy
 async function fetchUpcomingMacro() {
   try {
-    const r = await fetch("/.netlify/functions/fred-calendar?days=180", { cache: "no-store" });
-    const j = await r.json();
+    // Collect normalized events here
+    const baseEvents: any[] = [];
 
-   // Normalize the response shape: prefer events[], but allow a raw array too
-const raw: any[] = Array.isArray((j as any)?.events)
-  ? (j as any).events
-  : Array.isArray(j)
-  ? (j as any)
-  : [];
+    // 60d window (UTC)
+    const from = toYMD_UTC(new Date());
+    const to = toYMD_UTC(new Date(Date.now() + 60 * 86_400_000));
 
-// Map to {title, date, time}, tolerating different field names
-const events = raw
-  .map((ev: any) => {
-    const iso = String(
-      ev?.at || ev?.date || ev?.datetime || ev?.ts || ev?.timestamp || ""
-    );
+    // Call Finnhub through the proxy (no FINNHUB_KEY in browser)
+    const j: any = await finnhub(`/calendar/economic?from=${from}&to=${to}`);
 
-    // Pull YYYY-MM-DD if present
-    const dateMatch = /^\d{4}-\d{2}-\d{2}/.exec(iso);
-    const date = dateMatch ? dateMatch[0] : "";
-    if (!date) return null;
+    // Robust array extraction across possible shapes
+    let raw: any[] =
+      (Array.isArray(j?.economicCalendar) && j.economicCalendar) ||
+      (Array.isArray(j?.economicCalendar?.result) && j.economicCalendar.result) ||
+      (Array.isArray(j?.economicCalendar?.data) && j.economicCalendar.data) ||
+      (Array.isArray(j?.economicCalendar?.events) && j.economicCalendar.events) ||
+      (Array.isArray(j?.result) && j.result) ||
+      (Array.isArray(j?.data) && j.data) ||
+      (Array.isArray(j?.events) && j.events) ||
+      [];
 
-    // Optional HH:MM from either explicit field or parsed iso
-    const time =
-      ev?.time ? String(ev.time) : (/\d{2}:\d{2}/.exec(iso)?.[0] ?? "");
+    // If it's an object of arrays, flatten values
+    if (!raw.length && j?.economicCalendar && typeof j.economicCalendar === "object") {
+      const vals = Object.values(j.economicCalendar).filter(Array.isArray) as any[];
+      if (vals.length) raw = vals.flat();
+    }
 
-    const title = String(ev?.title || ev?.name || ev?.event || "Macro");
-    return { title, date, time };
-  })
-  .filter(Boolean as any)
-  .sort((a: any, b: any) =>
-    (a.date + (a.time || "")).localeCompare(b.date + (b.time || ""))
-  );
+    // Normalize into a consistent shape for your UI
+    const norm = (raw as any[]).map((x: any) => {
+      const dateStr =
+        (x?.date || x?.releaseDate || x?.reportDate || x?.day || "")
+          .toString()
+          .slice(0, 10);
 
-// Keep a healthy list for the sidebar
-setFredEconEvents((events as any[]).slice(0, 50));
+      // Some feeds include a time field; keep it if present
+      const timeStr = (x?.time || x?.hour || "").toString();
+      const eventName = (x?.event || x?.title || x?.indicator || "").toString();
 
-    try { localStorage.setItem("fredEventsCacheV2", JSON.stringify(events)); } catch {}
+      // Importance / impact normalization
+      const impactRaw = (x?.importance || x?.impact || "").toString().toLowerCase();
+      const impact =
+        impactRaw === "high" || impactRaw === "medium" || impactRaw === "low"
+          ? impactRaw
+          : impactRaw.includes("high")
+          ? "high"
+          : impactRaw.includes("med")
+          ? "medium"
+          : impactRaw.includes("low")
+          ? "low"
+          : undefined;
 
-    console.log("[FRED] set", events.length, "events");
+      const country = (x?.country || x?.region || "").toString().toUpperCase();
+
+      // Timestamp for sorting (assume midnight UTC if no time)
+      const ts = Date.parse(dateStr ? `${dateStr}T00:00:00Z` : "");
+
+      return {
+        key: `${dateStr}|${eventName}`,
+        date: dateStr || undefined,
+        time: timeStr || undefined,
+        event: eventName || "(Unnamed event)",
+        impact,
+        country,
+        ts: Number.isFinite(ts) ? ts : undefined,
+      };
+    });
+
+    // Filter obvious junk, sort by (date desc = soonest first), then by impact
+    const impactRank: Record<string, number> = { high: 3, medium: 2, low: 1 };
+    const cleaned = norm
+      .filter((e) => e.date && e.event)
+      .sort((a, b) => {
+        const t = (a.ts || 0) - (b.ts || 0);
+        if (t !== 0) return t;
+        const ia = impactRank[a.impact as string] || 0;
+        const ib = impactRank[b.impact as string] || 0;
+        return ib - ia; // higher impact first if same day
+      });
+
+    // Optional: keep top N for UI brevity
+    for (const ev of cleaned.slice(0, 50)) baseEvents.push(ev);
+
+    setEconEvents(baseEvents);
   } catch (e) {
-    addDebug("fetchUpcomingMacro FRED error", e);
-    setFredEconEvents([]);
+    addDebug("fetchUpcomingMacro error", e);
+    setEconEvents([]);
   }
 }
 
@@ -2413,8 +2446,92 @@ try {
 }
 
 
-/* Macro events are handled by FRED on app load (fetchUpcomingMacro).
-   We intentionally do NOT overwrite them per ticker anymore. */
+    // Macro events: Finnhub economic calendar + overrides + optional external JSON
+    try {
+      const baseEvents: EconEvent[] = [];
+      if (FINNHUB_KEY) {
+        const from = toYMD_UTC(new Date());
+        const to = toYMD_UTC(new Date(Date.now() + 35 * 86_400_000));
+        const url = `https://finnhub.io/api/v1/calendar/economic?from=${from}&to=${to}&token=${FINNHUB_KEY}`;
+        const r = await fetch(url);
+        let arr: any[] = [];
+        if (r.ok) {
+          const j = await r.json();
+let raw: any[] =
+  (Array.isArray(j?.economicCalendar) && j.economicCalendar) ||
+  (Array.isArray(j?.economicCalendar?.result) && j.economicCalendar.result) ||
+  (Array.isArray(j?.economicCalendar?.data) && j.economicCalendar.data) ||
+  (Array.isArray(j?.economicCalendar?.events) && j.economicCalendar.events) ||
+  (Array.isArray(j?.result) && j.result) ||
+  (Array.isArray(j?.data) && j.data) ||
+  (Array.isArray(j?.events) && j.events) ||
+  [];
+
+// Fallback: if economicCalendar is an object with array children, grab them
+if (!raw.length && j?.economicCalendar && typeof j.economicCalendar === "object") {
+  const vals = Object.values(j.economicCalendar).filter(Array.isArray) as any[];
+  if (vals.length) raw = vals.flat();
+}
+arr = raw;
+        }
+        const keyWords = [
+  // Inflation
+  "cpi","consumer price index","core cpi","inflation",
+  "pce","core pce","personal consumption expenditures",
+  // Fed
+  "fomc","federal open market committee","federal reserve",
+  "powell","press conference","minutes","rate","interest",
+  // Labor
+  "nonfarm","payroll","jobs","unemployment","claims","jobless",
+  // ISM/PMI
+  "ism","pmi","manufacturing","services"
+];
+        const usish = (c?: string) => !c || /US|United States|USA/i.test(c);
+        for (const x of arr) {
+          const name = (x?.event || x?.title || x?.indicator || "").toString();
+          const country = (x?.country || x?.region || "").toString();
+          if (usish(country) && keyWords.some((k) => name.toLowerCase().includes(k))) {
+           const date = (/\d{4}-\d{2}-\d{2}/.exec(
+  (x?.date || x?.releaseDate || x?.nextRelease || x?.eventDate || x?.datetime || "").toString()
+)?.[0]) || "";
+const time = (/\b\d{2}:\d{2}\b/.exec(
+  (x?.time || x?.releaseTime || x?.datetime || "").toString()
+)?.[0]) || "";
+            baseEvents.push({ title: name, date, time });
+          }
+        }
+      }
+      // -- keep only future events (UTC-aware, same-day respects time) --
+const todayUTC = toYMD_UTC(new Date());           // "YYYY-MM-DD" in UTC
+const nowHM = new Date().toISOString().slice(11,16); // "HH:MM" in UTC
+
+const isFuture = (e: EconEvent) => {
+  if (!e?.date) return false;
+  if (e.date > todayUTC) return true;     // strictly future date
+  if (e.date < todayUTC) return false;    // past date
+  // same-day: if no time provided, keep it; else compare HH:MM
+  if (!e.time) return true;
+  return e.time >= nowHM;
+};
+
+// Overrides (kept empty or curated) → future only
+const extraA = MACRO_OVERRIDES.filter(isFuture);
+
+// Optional external curated feed (future filtered below)
+const extraB = await fetchExternalMacroJSON();
+
+// Merge → dedupe → future-only → sort → cap
+const merged = uniqueMacro([...baseEvents, ...extraA, ...extraB])
+  .filter(isFuture)
+  .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))
+  .slice(0, 10);
+
+setEconEvents(merged);
+    } catch (e) {
+      addDebug("fetchNews (macro) error", e);
+      setEconEvents(uniqueMacro(MACRO_OVERRIDES));
+    }
+  }
 
 
   // -----------------------------
@@ -2490,7 +2607,7 @@ if (name === "ticker" || name === "type" || name === "expiry") {
   setInsights({ score: 0, advice: [], explainers: [] });
   setLlmStatus("");
   setHeadlines([]);
-  // setEconEvents([]); // keep macro events
+  setEconEvents([]);
   setEarnings(null);
 }
 setSubmitted(false);
@@ -3400,7 +3517,7 @@ function renderTLDR() {
     </div>
 
     {/* Watch-outs */}
-    <div className="rounded-2xl ring-1 ring-red-400/70 shadow-[0_0_20px_-10px_rgba(245,158,11,0.55)]">
+    <div className="rounded-2xl ring-1 ring-amber-400/70 shadow-[0_0_20px_-10px_rgba(245,158,11,0.55)]">
       <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
         <div className="text-sm font-semibold text-neutral-200 mb-2">What to watch out for</div>
         <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
@@ -3917,43 +4034,34 @@ function toneForROI(roi?: number) {
                 </div>
 
 
-{/* Macro upcoming */}
-<div>
-  <div className="text-neutral-400 text-xs uppercase tracking-widest mb-1">
-    Upcoming
-  </div>
-  {(() => {
-    // derive a stable list each render (falls back to cache if needed)
-    let macroList: any[] = Array.isArray(fredEconEvents) ? fredEconEvents : [];
-    if (!macroList.length) {
-      try {
-        const cached = JSON.parse(localStorage.getItem("fredEventsCacheV1") || "[]");
-        if (Array.isArray(cached)) macroList = cached;
-      } catch {}
-    }
+                {/* Macro upcoming */}
+                <div>
+                  <div className="text-neutral-400 text-xs uppercase tracking-widest mb-1">
+                    Upcoming
+                  </div>
+                  {econEvents.length ? (
+                    <ul className="space-y-1">
+                      {econEvents.map((e, i) => (
+                        <li key={`ev-${i}`} className="flex gap-2">
+                          <span className="mt-0.5">•</span>
+                          <span>
+                            {e.title} —{" "}
+                            <span className="text-neutral-500">
+                              {displayMDY(e.date)}
+                              {e.time ? ` ${e.time}` : ""}
+                            </span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="text-neutral-500 text-xs">
+                      No macro events found in the next month (COMING SOON).
+                    </div>
+                  )}
+                </div>
 
-    if (!macroList.length) {
-      return <div className="text-neutral-500 text-xs">No macro events found in the next month (COMING SOON).</div>;
-    }
 
-    return (
-      <ul className="space-y-1">
-        {macroList.map((e: any, i: number) => (
-          <li key={`ev-${i}`} className="flex gap-2">
-            <span className="mt-0.5">•</span>
-            <span>
-              {e.title} —{" "}
-              <span className="text-neutral-500">
-                {displayMDY(e.date)}
-                {e.time ? ` ${e.time}` : ""}
-              </span>
-            </span>
-          </li>
-        ))}
-      </ul>
-    );
-  })()}
-</div>
                 {/* Headlines */}
 <div>
   <div className="text-neutral-400 text-xs uppercase tracking-widest mb-1">
@@ -4020,7 +4128,7 @@ function toneForROI(roi?: number) {
 
 
 <div className="text-center text-neutral-600 text-xs pb-10 relative z-10">
-  AI MAY MAKE MISTAKES - CHECK IMPORTANT INFO - NOT FINANCIAL ADVICE
+  THIS IS IN BETA! NOT FINANCIAL ADVICE
 </div>
 
 {/* Floating “Key” legend — left side */}
