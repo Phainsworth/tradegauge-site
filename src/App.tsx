@@ -2382,96 +2382,6 @@ try {
   addDebug("fetchNews (headlines) error", e);
   setHeadlines([]);
 }
-
-
-    // Macro events: Finnhub economic calendar + overrides + optional external JSON
-    try {
-      const baseEvents: EconEvent[] = [];
-      if (FINNHUB_KEY) {
-        const from = toYMD_UTC(new Date());
-        const to = toYMD_UTC(new Date(Date.now() + 35 * 86_400_000));
-        const url = `https://finnhub.io/api/v1/calendar/economic?from=${from}&to=${to}&token=${FINNHUB_KEY}`;
-        const r = await fetch(url);
-        let arr: any[] = [];
-        if (r.ok) {
-          const j = await r.json();
-let raw: any[] =
-  (Array.isArray(j?.economicCalendar) && j.economicCalendar) ||
-  (Array.isArray(j?.economicCalendar?.result) && j.economicCalendar.result) ||
-  (Array.isArray(j?.economicCalendar?.data) && j.economicCalendar.data) ||
-  (Array.isArray(j?.economicCalendar?.events) && j.economicCalendar.events) ||
-  (Array.isArray(j?.result) && j.result) ||
-  (Array.isArray(j?.data) && j.data) ||
-  (Array.isArray(j?.events) && j.events) ||
-  [];
-
-// Fallback: if economicCalendar is an object with array children, grab them
-if (!raw.length && j?.economicCalendar && typeof j.economicCalendar === "object") {
-  const vals = Object.values(j.economicCalendar).filter(Array.isArray) as any[];
-  if (vals.length) raw = vals.flat();
-}
-arr = raw;
-        }
-        const keyWords = [
-  // Inflation
-  "cpi","consumer price index","core cpi","inflation",
-  "pce","core pce","personal consumption expenditures",
-  // Fed
-  "fomc","federal open market committee","federal reserve",
-  "powell","press conference","minutes","rate","interest",
-  // Labor
-  "nonfarm","payroll","jobs","unemployment","claims","jobless",
-  // ISM/PMI
-  "ism","pmi","manufacturing","services"
-];
-        const usish = (c?: string) => !c || /US|United States|USA/i.test(c);
-        for (const x of arr) {
-          const name = (x?.event || x?.title || x?.indicator || "").toString();
-          const country = (x?.country || x?.region || "").toString();
-          if (usish(country) && keyWords.some((k) => name.toLowerCase().includes(k))) {
-           const date = (/\d{4}-\d{2}-\d{2}/.exec(
-  (x?.date || x?.releaseDate || x?.nextRelease || x?.eventDate || x?.datetime || "").toString()
-)?.[0]) || "";
-const time = (/\b\d{2}:\d{2}\b/.exec(
-  (x?.time || x?.releaseTime || x?.datetime || "").toString()
-)?.[0]) || "";
-            baseEvents.push({ title: name, date, time });
-          }
-        }
-      }
-      // -- keep only future events (UTC-aware, same-day respects time) --
-const todayUTC = toYMD_UTC(new Date());           // "YYYY-MM-DD" in UTC
-const nowHM = new Date().toISOString().slice(11,16); // "HH:MM" in UTC
-
-const isFuture = (e: EconEvent) => {
-  if (!e?.date) return false;
-  if (e.date > todayUTC) return true;     // strictly future date
-  if (e.date < todayUTC) return false;    // past date
-  // same-day: if no time provided, keep it; else compare HH:MM
-  if (!e.time) return true;
-  return e.time >= nowHM;
-};
-
-// Overrides (kept empty or curated) → future only
-const extraA = MACRO_OVERRIDES.filter(isFuture);
-
-// Optional external curated feed (future filtered below)
-const extraB = await fetchExternalMacroJSON();
-
-// Merge → dedupe → future-only → sort → cap
-const merged = uniqueMacro([...baseEvents, ...extraA, ...extraB])
-  .filter(isFuture)
-  .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))
-  .slice(0, 10);
-
-setEconEvents(merged);
-    } catch (e) {
-      addDebug("fetchNews (macro) error", e);
-      setEconEvents(uniqueMacro(MACRO_OVERRIDES));
-    }
-  }
-
-
   // -----------------------------
   // INPUT + EFFECTS
   // -----------------------------
@@ -2686,11 +2596,7 @@ setGreeks({
     src: "Tradier",
   });
 }
-console.log("[QUOTE UI STATE]", snap?.quoteNum, "→", { bid: snap?.quoteNum?.bid?.toFixed?.(2), ask: snap?.quoteNum?.ask?.toFixed?.(2), last: snap?.quoteNum?.last?.toFixed?.(2), mark: snap?.quoteNum?.mark?.toFixed?.(2) });
-
       await Promise.all([fetchNewsAndEvents(form.ticker), fetchEarnings(form.ticker)]);
-
-
 await analyzeWithAI({
   greeksOverride: snap?.numericGreeks ?? undefined,
   contractOverride: snap?.contract,
