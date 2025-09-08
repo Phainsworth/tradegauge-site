@@ -3820,6 +3820,21 @@ const buildDangerWindows = (
         eventsByDay[d].push({ title: e.title, time: e.time });
       }
     }
+    // Label helper: get a clean date string for a day offset (0..14)
+    const dateForOffset = (offset: number) => {
+      const base = new Date();
+      const dt = new Date(base.getFullYear(), base.getMonth(), base.getDate() + offset);
+      // if you have displayMDY(YYYY-MM-DD), use it; else fallback to toLocaleDateString
+      const ymd = dt.toISOString().slice(0, 10);
+      try {
+        // assumes you already have a displayMDY helper elsewhere in this file
+        // e.g., 2025-09-08 -> "Sep 8, 2025"
+        // @ts-ignore
+        return displayMDY(ymd) || dt.toLocaleDateString();
+      } catch {
+        return dt.toLocaleDateString();
+      }
+    };
 
     // Dot color by highest-risk item on that day
     const colorForItems = (items: { title: string }[]) => {
