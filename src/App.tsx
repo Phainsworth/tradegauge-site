@@ -2334,39 +2334,11 @@ async function fetchUpcomingMacro() {
     else if (typeof setFredEconEvents === "function") setFredEconEvents([]);
   }
 }
-// Macro events: Finnhub economic calendar + overrides + optional external JSON
-    // Macro events: handled by always-on FRED feed (no-op stub kept for structure)
+// Macro events now handled by fetchUpcomingMacro() via FRED — keep no-op to preserve structure
 try {
-  // Intentionally left blank.
-  // The macro calendar is now loaded by fetchUpcomingMacro() on mount
-  // and refreshed every 6 hours from /.netlify/functions/fred-calendar.
-  //
-  // If you ever want to layer in curated extras without overwriting FRED:
-  // const todayUTC = toYMD_UTC(new Date());             // "YYYY-MM-DD"
-  // const nowHM = new Date().toISOString().slice(11,16); // "HH:MM" UTC
-  // const isFuture = (e: {date?: string; time?: string}) => {
-  //   if (!e?.date) return false;
-  //   if (e.date > todayUTC) return true;
-  //   if (e.date < todayUTC) return false;
-  //   if (!e.time) return true;
-  //   return e.time >= nowHM;
-  // };
-  // const extraA = (Array.isArray(MACRO_OVERRIDES) ? MACRO_OVERRIDES : []).filter(isFuture);
-  // const extraB = await fetchExternalMacroJSON();
-  // if (extraA.length || extraB.length) {
-  //   const merged = uniqueMacro([...extraA, ...extraB])
-  //     .filter(isFuture)
-  //     .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))
-  //     .slice(0, 20);
-  //   // Option 1: emit to console for review
-  //   console.log("[MACRO] curated extras (not overriding FRED):", merged);
-  //   // Option 2: if you *do* want to display extras, you can merge them in
-  //   // wherever you render, not here.
-  // }
+  // no-op
 } catch (e) {
-  // No-op: we don’t want this path to overwrite macro events anymore.
-  // Keep a small breadcrumb for debugging:
-  if (typeof addDebug === "function") addDebug("macro no-op stub error", e);
+  if (typeof addDebug === "function") addDebug("macro no-op", e);
 }
   // -----------------------------
   // INPUT + EFFECTS
