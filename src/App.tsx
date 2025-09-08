@@ -3730,6 +3730,50 @@ function renderTLDR() {
       if (t.startsWith("jobless") || t.includes("claims")) return ["LOW", "bg-neutral-800 text-neutral-300"];
       return ["—", "bg-neutral-800 text-neutral-400"];
     };
+   // ---- Danger-window helpers ----
+const daysFromNow = (isoDate: string) => {
+  const today = new Date();
+  const atMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const d = new Date(isoDate + "T00:00:00Z").getTime();
+  return Math.floor((d - atMidnight) / 86_400_000);
+};
+
+const windowFor = (title: string): [number, number] => {
+  const k = title.toLowerCase();
+  if (k.includes("cpi")) return [-1, +1];
+  if (k.includes("ppi")) return [-1, +1];
+  if (k.includes("retail")) return [-1, 0];
+  if (k.includes("fomc")) return [-2, +2];
+  if (k.includes("powell")) return [0, 0];
+  if (k.includes("jobless") || k.includes("claims")) return [0, 0];
+  if (k.includes("earnings")) return [-2, +1];
+  return [0, 0];
+};
+
+const buildDangerWindows = (
+  events: { title: string; date: string }[],
+  horizonDays = 14
+): { start: number; end: number }[] => {
+  const raw = events
+    .map((ev) => {
+      const d = daysFromNow(ev.date);
+      const [pre, post] = windowFor(ev.title);
+      return { start: d + pre, end: d + post };
+    })
+    .map((w) => ({ start: Math.max(0, w.start), end: Math.min(horizonDays, w.end) }))
+    .filter((w) => w.start <= w.end);
+
+  if (!raw.length) return [];
+  raw.sort((a, b) => a.start - b.start);
+
+  const merged: { start: number; end: number }[] = [];
+  for (const w of raw) {
+    const last = merged[merged.length - 1];
+    if (!last || w.start > last.end + 1) merged.push({ ...w });
+    else last.end = Math.max(last.end, w.end);
+  }
+  return merged;
+};
 
     // --- source data ---
     const macros = safeArr(econEvents);
