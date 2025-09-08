@@ -2304,31 +2304,26 @@ async function fetchEarnings(symbol: string) {
     setEarnings(null);
   }
 }
-async function fetchUpcomingMacro() {
+sync function fetchUpcomingMacro() {
   try {
     const r = await fetch("/.netlify/functions/fred-calendar?days=180", { cache: "no-store" });
     const j = await r.json();
-    const arr = Array.isArray(j?.events) ? j.events : [];
+    const arr = Array.isArray(j && j.events) ? j.events : [];
 
     const events = arr
-      .map((ev: any) => {
-        const date = typeof ev?.at === "string" ? ev.at.slice(0, 10) : "";
+      .map((ev) => {
+        const date = ev && ev.at ? String(ev.at).slice(0, 10) : "";
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-        const title = String(ev?.title ?? "Macro");
-        const time  = ev?.time ? String(ev.time) : "";
+        const title = ev && ev.title ? String(ev.title) : "Macro";
+        const time = ev && ev.time ? String(ev.time) : "";
         return { title, date, time };
       })
       .filter(Boolean);
 
     events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
-
-    // Your state setter is setEconEvents in this file
     setEconEvents(events.slice(0, 20));
 
-    // Cache for fallback
     try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(events)); } catch {}
-
-    // Debug variety
     console.log("[FRED] set", events.length, "events — unique titles:", Array.from(new Set(events.map(e => e.title))));
   } catch (e) {
     addDebug("fetchUpcomingMacro FRED error", e);
@@ -2381,6 +2376,40 @@ try {
 } catch (e) {
   addDebug("fetchNews (headlines) error", e);
   setHeadlines([]);
+}
+// Macro events: Finnhub economic calendar + overrides + optional external JSON
+    // Macro events: handled by always-on FRED feed (no-op stub kept for structure)
+try {
+  // Intentionally left blank.
+  // The macro calendar is now loaded by fetchUpcomingMacro() on mount
+  // and refreshed every 6 hours from /.netlify/functions/fred-calendar.
+  //
+  // If you ever want to layer in curated extras without overwriting FRED:
+  // const todayUTC = toYMD_UTC(new Date());             // "YYYY-MM-DD"
+  // const nowHM = new Date().toISOString().slice(11,16); // "HH:MM" UTC
+  // const isFuture = (e: {date?: string; time?: string}) => {
+  //   if (!e?.date) return false;
+  //   if (e.date > todayUTC) return true;
+  //   if (e.date < todayUTC) return false;
+  //   if (!e.time) return true;
+  //   return e.time >= nowHM;
+  // };
+  // const extraA = (Array.isArray(MACRO_OVERRIDES) ? MACRO_OVERRIDES : []).filter(isFuture);
+  // const extraB = await fetchExternalMacroJSON();
+  // if (extraA.length || extraB.length) {
+  //   const merged = uniqueMacro([...extraA, ...extraB])
+  //     .filter(isFuture)
+  //     .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))
+  //     .slice(0, 20);
+  //   // Option 1: emit to console for review
+  //   console.log("[MACRO] curated extras (not overriding FRED):", merged);
+  //   // Option 2: if you *do* want to display extras, you can merge them in
+  //   // wherever you render, not here.
+  // }
+} catch (e) {
+  // No-op: we don’t want this path to overwrite macro events anymore.
+  // Keep a small breadcrumb for debugging:
+  if (typeof addDebug === "function") addDebug("macro no-op stub error", e);
 }
   // -----------------------------
   // INPUT + EFFECTS
