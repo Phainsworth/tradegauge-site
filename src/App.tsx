@@ -2334,12 +2334,7 @@ async function fetchUpcomingMacro() {
     else if (typeof setFredEconEvents === "function") setFredEconEvents([]);
   }
 }
-// Macro events now handled by fetchUpcomingMacro() via FRED — keep no-op to preserve structure
-try {
-  // no-op
-} catch (e) {
-  if (typeof addDebug === "function") addDebug("macro no-op", e);
-}
+
   // -----------------------------
   // INPUT + EFFECTS
   // -----------------------------
