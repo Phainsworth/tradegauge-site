@@ -3781,7 +3781,7 @@ const buildDangerWindows = (
 
     // risky-only filter: keep just market movers; drop claims
     const RISKY_RE =
-      /(FOMC|Federal\s+Reserve|Rate\s+Decision|CPI|Core\s+CPI|PCE|Core\s+PCE|PPI|Retail\s+Sales)/i;
+  /(FOMC|Federal\s+Reserve|Rate\s+Decision|Federal\s+Funds\s+Rate|Press\s+Conference|Statement|Dot\s+Plot|SEP|CPI|Core\s+CPI|PCE|Core\s+PCE|PPI|Retail\s+Sales)/i;
 
     // Pre-compute: if we keep FOMC, prefer the actual rate-decision (Wed) when the prior day exists.
     const fomcSet = new Set(
@@ -3791,16 +3791,18 @@ const buildDangerWindows = (
     const cleaned = macros
       .filter((e) => inNextN(e, withinDays))
       .filter((e) => RISKY_RE.test(e.title) && !/jobless|claims/i.test(e.title))
-      .filter((e) => {
-        // only keep FOMC decision day (Wed) when Tuesday exists
-        if (/^FOMC\b/i.test(e.title)) {
-          const dt = new Date(`${e.date}T00:00:00Z`);
-          const isWed = dt.getUTCDay() === 3;
-          const prev = new Date(dt.getTime() - 86400000).toISOString().slice(0, 10);
-          return isWed && fomcSet.has(prev);
-        }
-        return true;
-      })
+.filter((e) => {
+  if (/fomc|federal\s+reserve/i.test(e.title)) {
+    // Keep decision / presser / statement explicitly
+    if (/(rate|decision|press|conference|statement|federal\s+funds\s+rate)/i.test(e.title)) return true;
+
+    // Optional: still favor Wednesday (decision day) if you prefer
+    const dt = new Date(`${e.date}T00:00:00Z`);
+    const isWed = dt.getUTCDay() === 3;
+    return isWed; // keep Wed even if Tuesday placeholder isn't present
+  }
+  return true;
+})
       .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))
       .slice(0, 10); // cap to next 10
 
