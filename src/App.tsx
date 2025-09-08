@@ -2377,31 +2377,25 @@ events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time |
 events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
 
 // De-noise spammy releases:
-// - FOMC: keep decision Wednesday (Tue+Wed meetings) OR explicit decision/presser/statement items
-// - Jobless Claims: keep Thursdays only
+// - FOMC: keep only *rate decision* Wednesdays (day 2 of the 2-day meeting: Tue+Wed)
+// - Jobless Claims: keep only Thursdays
 const fomcDates = new Set(events.filter(e => /^FOMC\b/i.test(e.title)).map(e => e.date));
-const filtered: any[] = [];
+const filtered = [];
 let lastDecision: string | null = null;
 
 for (const e of events) {
-  // Local-noon weekday to avoid UTC shifting a US date back a day
-  const dow = new Date(e.date + "T12:00:00").getDay(); // 0=Sun..6=Sat
+  const dow = new Date(e.date + "T00:00:00Z").getUTCDay(); // 0=Sun..6=Sat
 
-  // ---- FOMC gating ----
-  if (/^FOMC\b/i.test(e.title) || /federal\s+reserve/i.test(e.title)) {
-    // Allow explicit decision/presser/statement variants even if Tue record missing
-    const explicitDecision = /(rate|decision|press|conference|statement|federal\s+funds\s+rate|dot\s+plot|sep)/i.test(e.title);
-
-    // Or allow the canonical decision Wednesday when Tuesday exists in the set
+  if (/^FOMC\b/i.test(e.title)) {
+    // Keep ONLY if it's the Wednesday of a Tue+Wed meeting (prev day exists in FOMC set)
     const prev = new Date(new Date(e.date).getTime() - 86400000).toISOString().slice(0, 10);
     const isDecisionWed = dow === 3 && fomcDates.has(prev);
+    if (!isDecisionWed) continue;
 
-    if (!(explicitDecision || isDecisionWed)) continue;
-
-    // Canonical time if missing (statement ~ 14:00 ET)
+    // Canonical time: 14:00 (statement)
     if (!e.time) e.time = "14:00";
 
-    // Throttle accidental duplicates within ~2 weeks
+    // Extra throttle: avoid accidental duplicates within ~2 weeks
     if (lastDecision) {
       const diffDays = (new Date(e.date).getTime() - new Date(lastDecision).getTime()) / 86400000;
       if (diffDays < 14) continue;
@@ -2409,14 +2403,14 @@ for (const e of events) {
     lastDecision = e.date;
   }
 
-  // ---- Jobless Claims: only keep Thursday rows ----
-  if (/^Jobless Claims\b/i.test(e.title) && dow !== 4) continue;
+  if (/^Jobless Claims\b/i.test(e.title)) {
+    if (dow !== 4) continue; // Thu only
+  }
 
   filtered.push(e);
 }
 
-// Sort, cap to the next 10, persist
-filtered.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+// Cap to the next 10 items
 const top = filtered.slice(0, 10);
 setEconEvents(top);
 
@@ -3713,12 +3707,11 @@ function renderTLDR() {
     const now = new Date();
     const withinDays = 14;
 
-if (/^FOMC\b/i.test(e.title)) {
-  const dt = new Date(`${e.date}T12:00:00`);   // local noon
-  const isWed = dt.getDay() === 3;             // local weekday
-  // If you still want to throttle to “decision Wednesday”, keep just Wed
-  return isWed;
-}
+const mkDate = (e: any) => {
+  const t = e?.time && /^\d{2}:\d{2}$/.test(e.time) ? e.time : "12:00";
+  // Local time at midday → avoids UTC off-by-one on the dots & timers
+  return new Date(`${e.date}T${t}:00`);
+};
     const diffDH = (d: Date) => {
       const ms = d.getTime() - now.getTime();
       const days = Math.floor(ms / 86400000);
