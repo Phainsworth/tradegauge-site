@@ -2325,22 +2325,34 @@ async function fetchUpcomingMacro() {
     // Sort ascending
 events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
 
+// Sort ascending
+events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+
 // De-noise spammy releases:
-// - FOMC: keep only Wednesdays, max 1 per 7 days
+// - FOMC: keep only *rate decision* Wednesdays (day 2 of the 2-day meeting: Tue+Wed)
 // - Jobless Claims: keep only Thursdays
-const filtered: typeof events = [];
-let lastFOMC: string | null = null;
+const fomcDates = new Set(events.filter(e => /^FOMC\b/i.test(e.title)).map(e => e.date));
+const filtered = [];
+let lastDecision: string | null = null;
 
 for (const e of events) {
   const dow = new Date(e.date + "T00:00:00Z").getUTCDay(); // 0=Sun..6=Sat
 
   if (/^FOMC\b/i.test(e.title)) {
-    if (dow !== 3) continue; // Wed only
-    if (lastFOMC) {
-      const diffDays = (new Date(e.date).getTime() - new Date(lastFOMC).getTime()) / 86400000;
-      if (diffDays < 7) continue; // throttle to ≤ 1 per week
+    // Keep ONLY if it's the Wednesday of a Tue+Wed meeting (prev day exists in FOMC set)
+    const prev = new Date(new Date(e.date).getTime() - 86400000).toISOString().slice(0, 10);
+    const isDecisionWed = dow === 3 && fomcDates.has(prev);
+    if (!isDecisionWed) continue;
+
+    // Canonical time: 14:00 (statement)
+    if (!e.time) e.time = "14:00";
+
+    // Extra throttle: avoid accidental duplicates within ~2 weeks
+    if (lastDecision) {
+      const diffDays = (new Date(e.date).getTime() - new Date(lastDecision).getTime()) / 86400000;
+      if (diffDays < 14) continue;
     }
-    lastFOMC = e.date;
+    lastDecision = e.date;
   }
 
   if (/^Jobless Claims\b/i.test(e.title)) {
@@ -2350,9 +2362,11 @@ for (const e of events) {
   filtered.push(e);
 }
 
-setEconEvents(filtered.slice(0, 20));
-try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(filtered)); } catch {}
+// Cap to the next 10 items
+const top = filtered.slice(0, 10);
+setEconEvents(top);
 
+try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(top)); } catch {}
     try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(events)); } catch {}
     console.log("[FRED] set", events.length, "events — unique titles:", Array.from(new Set(events.map(e => e.title))));
   } catch (e) {
