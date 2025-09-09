@@ -3913,7 +3913,14 @@ const dotSize = (d: number) => {
       }
       return "bg-neutral-400";  // fallback (shouldn’t hit often due to filter)
     };
-
+// Dot size by highest-impact item on that day
+const sizeForItems = (items: { title: string }[]) => {
+  const t = (s: string) => s.toLowerCase();
+  const has = (k: string) => items.some((it) => t(it.title).includes(k));
+  if (has("cpi") || has("fomc") || has("federal funds") || has("press conference")) return "w-4 h-4"; // HIGH
+  if (has("ppi") || has("retail sales") || has("jobless claims")) return "w-3 h-3";                  // MED
+  return "w-2 h-2";                                                                                  // LOW/none
+};
     // Danger windows (merged shaded bands)
     const dangerWindows = buildDangerWindows(
       cleaned.map((e) => ({ title: e.title, date: e.date })),
