@@ -28,6 +28,7 @@ const [form, setForm] = useState({
   spot: "",
   open: "",     // <-- NEW: today's open for % change
 });
+   
   const [submitted, setSubmitted] = useState(false);
   // --- 3-route advice for "What I'd do if I were you" ---
 type RouteChoice = {
@@ -85,7 +86,9 @@ const STRIKES_EACH_SIDE = 30;
   const [llmStatus, setLlmStatus] = useState<string>("");
   const [isGenLoading, setIsGenLoading] = useState(false);
 
-
+const hardReset = () => {
+  window.location.reload();
+};
   // Loading overlay (3 jokes, 2s each)
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [overlayStep, setOverlayStep] = useState(0);
@@ -2610,6 +2613,7 @@ if (name === "ticker" || name === "type" || name === "expiry") {
   setEarnings(null);
 }
 setSubmitted(false);
+Promise.resolve().then(() => hardReset());
 };
 // Populate macro (FOMC/CPI/etc.) on app load + refresh every 6h
 useEffect(() => {
@@ -3229,7 +3233,7 @@ function renderTLDR() {
 {submitted && !isGenLoading && (
 <div className="flex justify-center mb-6">
   <button
-    onClick={resetToHome}
+    onClick={hardReset}
     className="inline-flex items-center gap-2 rounded-xl border border-purple-500 bg-neutral-900/70 backdrop-blur px-4 py-2 text-sm text-purple-300 hover:bg-purple-500/10 hover:shadow-[0_0_10px_rgba(168,85,247,0.6)] active:scale-[0.99] transition"
     title="Clear and start a fresh check"
     aria-label="Try another contract"
