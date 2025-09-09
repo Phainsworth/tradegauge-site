@@ -1401,8 +1401,11 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
       dte: daysToExpiry,
     });
 
-    // ---------- Netlify OpenAI proxy helper ----------
-const OPENAI_FN = "/.netlify/functions/openai-analyze"; // <— change if your function name differs
+setIsGenLoading(true);
+setLlmStatus("Analyzing…");
+
+// ---------- Netlify OpenAI proxy helper ----------
+const OPENAI_FN = "/.netlify/functions/openai-analyze";
 async function callOpenAIProxy(body: any) {
   const r = await fetch(OPENAI_FN, {
     method: "POST",
@@ -1425,112 +1428,74 @@ async function callOpenAIProxy(body: any) {
   return await r.json();
 }
 
-    async function callOpenAI(useStrictJson: boolean) {
-      return await callOpenAIProxy({
-        model: "gpt-4o-mini",
-        temperature: 0.9,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        ...(useStrictJson ? { response_format: { type: "json_object" } } : {}),
-      });
-    }
+// ---------- base rule score (fallback) ----------
+const ruleOnly = computeRuleRiskScore({
+  dte: daysToExpiry,
+  ivPct,
+  distance_otm_pct: d.distance_otm_pct,
+  oi: greeksNumbers.openInterest,
+  breakeven_gap_pct: d.breakeven_gap_pct,
+  earningsSoonTxt,
+  macroSoon,
+});
 
-    let resp;
-    try {
-      resp = await callOpenAI(true);
-    } catch (err: any) {
-      addDebug("OpenAI strict JSON failed, retrying", err);
-      resp = await callOpenAI(false);
-    }
+const clampScore = (n: any) =>
+  Number.isFinite(n) ? Math.max(0, Math.min(10, Number(n))) : ruleOnly;
 
-    const txt = resp?.choices?.[0]?.message?.content?.trim() || "{}";
-    let parsedJSON: any = {};
-    try {
-      parsedJSON = JSON.parse(txt);
-    } catch (err) {
-      addDebug("AI JSON parse error, attempting brace-slice", err);
-      const match = txt.match(/\{[\s\S]*\}/);
-      if (match) {
-        try {
-          parsedJSON = JSON.parse(match[0]);
-        } catch (err2) {
-          addDebug("AI JSON parse failed again", err2);
-        }
-      }
-    }
+// ---------- combine AI score + nudges ----------
+const baseScore = clampScore(parsedJSON?.score);
 
-    const safeNarr = sanitizeNarrative(parsedJSON?.narrative);
+// ---- PnL cushion nudge ----
+const paidVal = (() => {
+  const refMark =
+    opts?.quoteOverride && Number.isFinite(opts.quoteOverride.mark as any)
+      ? (opts.quoteOverride.mark as number)
+      : undefined;
+  const n = normalizePaid(form.pricePaid, refMark);
+  return Number.isFinite(n as any) ? (n as number) : NaN;
+})();
 
-    // ---------- base rule score (fallback) ----------
-    const ruleOnly = computeRuleRiskScore({
-      dte: daysToExpiry,
-      ivPct,
-      distance_otm_pct: d.distance_otm_pct,
-      oi: greeksNumbers.openInterest,
-      breakeven_gap_pct: d.breakeven_gap_pct,
-      earningsSoonTxt,
-      macroSoon,
-    });
+const q = opts?.quoteOverride;
+const mid =
+  q && Number.isFinite(q?.bid as any) && Number.isFinite(q?.ask as any) && (q!.ask as number) > 0
+    ? (((q!.bid as number) + (q!.ask as number)) / 2)
+    : NaN;
+const markNow = Number.isFinite(mid)
+  ? mid
+  : (q && Number.isFinite(q?.last as any) ? (q!.last as number)
+  : (q && Number.isFinite(q?.mark as any) ? (q!.mark as number) : NaN));
 
-    const clampScore = (n: any) =>
-      Number.isFinite(n) ? Math.max(0, Math.min(10, Number(n))) : ruleOnly;
+const pnlPct = Number.isFinite(paidVal) && Number.isFinite(markNow)
+  ? ((markNow - paidVal) / paidVal) * 100
+  : null;
 
-    // ---------- combine AI score + nudges ----------
-    const baseScore = clampScore(parsedJSON?.score);
-
-    // ---- PnL cushion nudge ----
-    const paidVal = (() => {
-      const refMark =
-        opts?.quoteOverride && Number.isFinite(opts.quoteOverride.mark as any)
-          ? (opts.quoteOverride.mark as number)
-          : undefined;
-      const n = normalizePaid(form.pricePaid, refMark);
-      return Number.isFinite(n as any) ? (n as number) : NaN;
-    })();
-
-    const q = opts?.quoteOverride;
-    const mid =
-      q && Number.isFinite(q?.bid as any) && Number.isFinite(q?.ask as any) && (q!.ask as number) > 0
-        ? (((q!.bid as number) + (q!.ask as number)) / 2)
-        : NaN;
-    const markNow = Number.isFinite(mid) ? mid
-      : (q && Number.isFinite(q?.last as any) ? (q!.last as number)
-      : (q && Number.isFinite(q?.mark as any) ? (q!.mark as number) : NaN));
-
-    const pnlPct = Number.isFinite(paidVal) && Number.isFinite(markNow)
-      ? ((markNow - paidVal) / paidVal) * 100
-      : null;
-// status + profit-protection hint (after pnl% exists)
-setLlmStatus("Analyzing…");
-
+// --- Profit-protection hint when up big (AFTER pnlPct exists) ---
 let profitHint: string | null = null;
 if (pnlPct != null && pnlPct >= 50) {
   profitHint =
-    "User is up ≥50% on this contract. Emphasize paying yourself and not letting it round-trip to red. Suggest partial take-profit (e.g., 1/3–1/2), trail a stop above breakeven (breakeven + slippage), and consider a time stop (e.g., a week before expiry or ahead of high-impact macro). Avoid adding risk.";
+    "User is up ≥50% on this contract. Emphasize paying yourself and not letting it round-trip to red. Suggest partial take-profit (e.g., 1/3–1/2), trail stop above breakeven (breakeven + slippage), and a time stop (e.g., 1 week before expiry or ahead of high-impact macro). Avoid adding risk.";
 }
-    const dteForNudge = Number.isFinite((daysToExpiry as any)) ? (daysToExpiry as number) : 999;
 
-    let cushionN = 0;
-    if (pnlPct !== null) {
-      if (pnlPct <= -60) cushionN += 1.8;
-      else if (pnlPct <= -40) cushionN += 0.9;
-      else if (pnlPct <= -20) cushionN += 0.5;
-      else if (pnlPct >= 80) cushionN -= 1.0;
-      else if (pnlPct >= 40) cushionN -= 0.7;
-      else if (pnlPct >= 20) cushionN -= 0.4;
+const dteForNudge = Number.isFinite((daysToExpiry as any)) ? (daysToExpiry as number) : 999;
 
-      if (dteForNudge <= 10 && pnlPct < 0) cushionN += 0.3; // short DTE & red = riskier
-      if (dteForNudge <= 5  && pnlPct > 0) cushionN += 0.1; // very short & green = tiny bump
-    }
-    console.log("[CUSHION] paid, mark, pnl%, dte, cushionN:", paidVal, markNow, pnlPct, dteForNudge, cushionN);
+let cushionN = 0;
+if (pnlPct !== null) {
+  if (pnlPct <= -60) cushionN += 1.8;
+  else if (pnlPct <= -40) cushionN += 0.9;
+  else if (pnlPct <= -20) cushionN += 0.5;
+  else if (pnlPct >= 80) cushionN -= 1.0;
+  else if (pnlPct >= 40) cushionN -= 0.7;
+  else if (pnlPct >= 20) cushionN -= 0.4;
 
-    // ---- FINAL SCORE ----
-    const CALIBRATION = { scale: 0.85, bias: -1.2 };
-    const recenter = (s: number) => (s * CALIBRATION.scale) + CALIBRATION.bias;
-    const finalScore = Math.max(0, Math.min(10, recenter(baseScore) + nudge + cushionN));
+  if (dteForNudge <= 10 && pnlPct < 0) cushionN += 0.3;
+  if (dteForNudge <= 5  && pnlPct > 0) cushionN += 0.1;
+}
+console.log("[CUSHION] paid, mark, pnl%, dte, cushionN:", paidVal, markNow, pnlPct, dteForNudge);
 
+// ---- FINAL SCORE ----
+const CALIBRATION = { scale: 0.85, bias: -1.2 };
+const recenter = (s: number) => (s * CALIBRATION.scale) + CALIBRATION.bias;
+const finalScore = Math.max(0, Math.min(10, recenter(baseScore) + nudge + cushionN));
     // ---------- Inputs for "What I'd do if I were you" ----------
     const ivPctForRoutes = Number.isFinite(ivPct as any) ? (ivPct as number) : null;
     const bidNow = (q && Number.isFinite(q?.bid as any)) ? (q!.bid as number) : null;
