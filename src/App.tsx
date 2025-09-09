@@ -2377,34 +2377,51 @@ events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time |
 events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
 
 // De-noise spammy releases:
+// De-noise spammy releases:
 // - FOMC: keep only *rate decision* Wednesdays (day 2 of the 2-day meeting: Tue+Wed)
 // - Jobless Claims: keep only Thursdays
-const fomcDates = new Set(events.filter(e => /^FOMC\b/i.test(e.title)).map(e => e.date));
+
+// Build FOMC keep-list: for each month, keep the latest Wednesday that follows a Tuesday FOMC
+const _fomcAll = events.filter(e => /^FOMC\b/i.test(e.title));
+const _fomcSet = new Set(_fomcAll.map(e => e.date));
+const _fomcWedCandidates = _fomcAll.filter(e => {
+  // Use 12:00Z to avoid any DST/offset weirdness around midnight
+  const dowUTC = new Date(e.date + "T12:00:00Z").getUTCDay(); // 0=Sun..6=Sat
+  if (dowUTC !== 3) return false; // we only want Wednesdays
+  const prev = new Date(new Date(e.date + "T12:00:00Z").getTime() - 86400000)
+    .toISOString()
+    .slice(0, 10);
+  // Wednesday is valid only if the preceding Tuesday exists in the set (Tue+Wed meeting)
+  return _fomcSet.has(prev);
+});
+
+// Group by YYYY-MM and keep the latest Wednesday in that month
+const _fomcByMonth: Record<string, string[]> = {};
+for (const e of _fomcWedCandidates) {
+  const key = e.date.slice(0, 7); // "YYYY-MM"
+  (_fomcByMonth[key] ||= []).push(e.date);
+}
+const fomcKeep = new Set<string>();
+for (const m of Object.keys(_fomcByMonth)) {
+  const latest = _fomcByMonth[m].sort().slice(-1)[0];
+  if (latest) fomcKeep.add(latest);
+}
+
 const filtered = [];
-let lastDecision: string | null = null;
 
 for (const e of events) {
-  const dow = new Date(e.date + "T00:00:00Z").getUTCDay(); // 0=Sun..6=Sat
+  const dowUTC = new Date(e.date + "T12:00:00Z").getUTCDay(); // 0=Sun..6=Sat
 
   if (/^FOMC\b/i.test(e.title)) {
-    // Keep ONLY if it's the Wednesday of a Tue+Wed meeting (prev day exists in FOMC set)
-    const prev = new Date(new Date(e.date).getTime() - 86400000).toISOString().slice(0, 10);
-    const isDecisionWed = dow === 3 && fomcDates.has(prev);
-    if (!isDecisionWed) continue;
+    // Keep only “true” decision Wednesdays (computed above)
+    if (!fomcKeep.has(e.date)) continue;
 
-    // Canonical time: 14:00 (statement)
+    // Canonical statement time
     if (!e.time) e.time = "14:00";
-
-    // Extra throttle: avoid accidental duplicates within ~2 weeks
-    if (lastDecision) {
-      const diffDays = (new Date(e.date).getTime() - new Date(lastDecision).getTime()) / 86400000;
-      if (diffDays < 14) continue;
-    }
-    lastDecision = e.date;
   }
 
   if (/^Jobless Claims\b/i.test(e.title)) {
-    if (dow !== 4) continue; // Thu only
+    if (dowUTC !== 4) continue; // Thu only
   }
 
   filtered.push(e);
