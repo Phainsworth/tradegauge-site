@@ -2703,14 +2703,16 @@ useEffect(() => {
   }, [form.ticker]);
 
 
-  // Strikes when ticker/type changes
-  useEffect(() => {
-    if (!form.ticker.trim() || !form.type) return;
-    loadStrikesAllExpiries(form.ticker, form.type as "CALL" | "PUT").catch((e) =>
-      addDebug("Strikes effect error", e)
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.ticker, form.type]);
+// Strikes when ticker/type/expiry changes (per-expiry list only)
+useEffect(() => {
+  if (!form.ticker.trim() || !form.type || !form.expiry) return;
+  loadStrikesForExpiry(
+    form.ticker,
+    form.type as "CALL" | "PUT",
+    form.expiry
+  ).catch((e) => addDebug("Strikes effect error", e));
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [form.ticker, form.type, form.expiry]);
 // Re-center strikes whenever the raw list or spot/current changes
 useEffect(() => {
   if (!allStrikes.length) return;
