@@ -3180,7 +3180,7 @@ function renderTLDR() {
 
 {/* Input card */}
 {!submitted && (
-  <div className="max-w-5xl mx-auto px-4 pb-10">
+  <div className={`max-w-5xl mx-auto px-4 pb-10 ${submitted ? "hidden" : ""}`}>
     <div className="form-card rounded-xl p-3 md:p-4 shadow-xl bg-neutral-950/70 border border-neutral-800">
       <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
 <TickerAutocomplete
