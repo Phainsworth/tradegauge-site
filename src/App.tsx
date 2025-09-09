@@ -1296,7 +1296,24 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
 
     setIsGenLoading(true);
     setLlmStatus("Analyzing…");
+// --- Profit-protection hint when up big ---
+const toNum_safe = (x: any) => {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+};
 
+// Try multiple sources; keep your own variable names if you already have them
+const pnlPct =
+  toNum_safe(calc?.pnlPct) ??
+  toNum_safe(form?.pnlPct) ??
+  null;
+
+// If up 50% or more, generate a strong hint
+let profitHint: string | null = null;
+if (pnlPct != null && pnlPct >= 0.50) {
+  profitHint =
+    "User is up ≥50% on this contract. Emphasize paying yourself and not letting it round-trip to red. Suggest partial take-profit (e.g., 1/3–1/2), trail stop above breakeven (breakeven + slippage), and a time stop (e.g., 1 week before expiry or ahead of high-impact macro). Avoid adding risk.";
+}
      
      function parsePlanJSON(txt: string): PlanOut | null {
   try {
