@@ -3109,26 +3109,73 @@ function renderTLDR() {
       <Starfield />
 
 
-      {/* Top hero */}
-      <div className="max-w-5xl mx-auto px-4 pt-16 pb-6 text-center relative z-10">
-        <h1 className="text-4xl md:text-6xl font-semibold leading-tight">
-          Options are risky — but how risky is yours?
-        </h1>
-        <p className="mt-4 text-neutral-400">Enter your trade and find out in seconds.</p>
+ {/* Top hero (switches after submit) */}
+<div className="max-w-5xl mx-auto px-4 pt-16 pb-6 text-center relative z-10">
+  {submitted ? (
+    <>
+      <h1 className="text-4xl md:text-6xl font-semibold leading-tight">
+        Here are your results
+      </h1>
+
+      {/* three chevrons pointing down */}
+      <div className="mt-3 flex items-center justify-center gap-6" aria-hidden="true">
         <svg
-          className="mx-auto mt-4 w-8 h-8 animate-bounce text-indigo-400/90"
+          className="w-8 h-8 animate-bounce text-indigo-400/90"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          aria-hidden="true"
         >
-          <path d="M12 5v12" />
-          <path d="M6 11l6 6 6-6" />
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+        <svg
+          className="w-8 h-8 animate-bounce [animation-delay:150ms] text-indigo-400/90"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+        <svg
+          className="w-8 h-8 animate-bounce [animation-delay:300ms] text-indigo-400/90"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M6 9l6 6 6-6" />
         </svg>
       </div>
+    </>
+  ) : (
+    <>
+      <h1 className="text-4xl md:text-6xl font-semibold leading-tight">
+        Options are risky — but how risky is yours?
+      </h1>
+      <p className="mt-4 text-neutral-400">Enter your trade and find out in seconds.</p>
+      <svg
+        className="mx-auto mt-4 w-8 h-8 animate-bounce text-indigo-400/90"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M12 5v12" />
+        <path d="M6 11l6 6 6-6" />
+      </svg>
+    </>
+  )}
+</div>
 
 
       {/* Input card */}
