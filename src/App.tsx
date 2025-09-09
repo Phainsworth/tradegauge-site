@@ -3526,10 +3526,10 @@ function renderTLDR() {
           What I like about this contract
         </div>
         <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
-          {plan.likes.map((t, i) => (
-  <li key={i} className="text-sm">{t}</li>
-))}
-        </ul>
+  {plan.likes.map((s, i) => (
+    <li key={i} className="text-sm">{capFirst(s)}</li>
+  ))}
+</ul>
       </div>
     </div>
 
@@ -3537,21 +3537,25 @@ function renderTLDR() {
     <div className="rounded-2xl ring-1 ring-red-400/70 shadow-[0_0_20px_-10px_rgba(245,158,11,0.55)]">
       <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
         <div className="text-sm font-semibold text-neutral-200 mb-2">What to watch out for</div>
-        <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
-          {plan.watchouts.map((s, i) => <li key={i} className="text-sm">{capFirst(t)}</li>
-        </ul>
+<ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
+  {plan.watchouts.map((s, i) => (
+    <li key={i} className="text-sm">{capFirst(s)}</li>
+  ))}
+</ul>
       </div>
     </div>
 
-    {/* What I’d do */}
-    <div className="rounded-2xl ring-1 ring-yellow-400/70 shadow-[0_0_22px_-10px_rgba(234,179,8,0.55)]">
-      <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
-        <div className="text-sm font-semibold text-neutral-200 mb-2">What I’d do (middle-risk, no prices)</div>
-        <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-line">{capFirst(plan.plan)}</p>
-      </div>
+{/* What I’d do */}
+<div className="rounded-2xl ring-1 ring-yellow-400/70 shadow-[0_0_22px_-10px_rgba(234,179,8,0.55)]">
+  <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
+    <div className="text-sm font-semibold text-neutral-200 mb-2">
+      What I’d do (middle-risk, no prices)
     </div>
+    <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-line">
+      {capFirst(plan.plan)}
+    </p>
   </div>
-)}
+</div>
 
 {/* Save & Share */}
 <div className="flex flex-wrap gap-2 pt-1">
