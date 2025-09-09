@@ -3178,10 +3178,11 @@ function renderTLDR() {
 </div>
 
 
-      {/* Input card */}
-      <div className="max-w-5xl mx-auto px-4 pb-10">
-        <div className="form-card rounded-xl p-3 md:p-4 shadow-xl bg-neutral-950/70 border border-neutral-800">
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+{/* Input card */}
+{!submitted && (
+  <div className="max-w-5xl mx-auto px-4 pb-10">
+    <div className="form-card rounded-xl p-3 md:p-4 shadow-xl bg-neutral-950/70 border border-neutral-800">
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
 <TickerAutocomplete
   label="Ticker"
   value={form.ticker}
@@ -3202,77 +3203,65 @@ function renderTLDR() {
 
     // Hide previous results immediately and prep for fresh run
     setSubmitted(false);
-
-    // OPTIONAL: clear any stale data so nothing flashes (uncomment if you have these)
-    // setPolyStatus("—");
-    // setMatchedContract("");
-    // setGreeks({ delta: "—", gamma: "—", theta: "—", vega: "—", iv: "—", openInterest: "—" });
-    // setInsights({ score: 0, advice: [], explainers: [] });
-    // setLlmStatus("");
-    // setHeadlines([]);
-    // setEconEvents([]);
-    // setEarnings(null);
-
-    // OPTIONAL: kick off expirations/strikes now if you want
-    // void loadExpirations(sym.toUpperCase());
   }}
 />
-            <Select
-              label="Option Type"
-              name="type"
-              value={form.type}
-              onChange={onChange}
-              options={["", "CALL", "PUT"]}
-              className="solid-input"
-            />
-            <Select
-              label={`Strike${loadingStrikes ? " (loading…)" : ""}`}
-              name="strike"
-              value={form.strike}
-              onChange={onChange}
-              options={strikes.length ? ["", ...strikes.map((n) => String(n))] : [""]}
-              className="solid-input"
-            />
-            <Select
-              label={`Expiration${loadingExp ? " (loading…)" : ""}`}
-              name="expiry"
-              value={form.expiry}
-              onChange={onChange}
-              options={expirations.length ? ["", ...expirations] : [""]}
-              className="solid-input"
-              renderAsDate
-            />
-            <Input
-              label="Price Paid (optional)"
-              name="pricePaid"
-              type="number"
-              value={form.pricePaid}
-              onChange={onChange}
-              placeholder="1.00, 2.10 etc"
-              min="0"
-              step="0.01"
-              className="solid-input"
-            />
-            <label className="flex flex-col text-sm md:self-end">
-              <span className="invisible mb-1">Submit</span>
-              <span
-                className="block"
-                title={isDisabled ? "Please fill in inputs with valid data" : undefined}
-              >
-                <button
-                  onClick={handleSubmit}
-                  disabled={isDisabled}
-                  className={`h-12 rounded-xl font-medium w-full ${
-                    isDisabled ? "bg-neutral-800 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-500"
-                  }`}
-                >
-                  {loadingExp || loadingStrikes ? "Please wait…" : "Submit"}
-                </button>
-              </span>
-            </label>
-          </div>
-        </div>
+        <Select
+          label="Option Type"
+          name="type"
+          value={form.type}
+          onChange={onChange}
+          options={["", "CALL", "PUT"]}
+          className="solid-input"
+        />
+        <Select
+          label={`Strike${loadingStrikes ? " (loading…)" : ""}`}
+          name="strike"
+          value={form.strike}
+          onChange={onChange}
+          options={strikes.length ? ["", ...strikes.map((n) => String(n))] : [""]}
+          className="solid-input"
+        />
+        <Select
+          label={`Expiration${loadingExp ? " (loading…)" : ""}`}
+          name="expiry"
+          value={form.expiry}
+          onChange={onChange}
+          options={expirations.length ? ["", ...expirations] : [""]}
+          className="solid-input"
+          renderAsDate
+        />
+        <Input
+          label="Price Paid (optional)"
+          name="pricePaid"
+          type="number"
+          value={form.pricePaid}
+          onChange={onChange}
+          placeholder="1.00, 2.10 etc"
+          min="0"
+          step="0.01"
+          className="solid-input"
+        />
+        <label className="flex flex-col text-sm md:self-end">
+          <span className="invisible mb-1">Submit</span>
+          <span
+            className="block"
+            title={isDisabled ? "Please fill in inputs with valid data" : undefined}
+          >
+            <button
+              onClick={handleSubmit}
+              disabled={isDisabled}
+              className={`h-12 rounded-xl font-medium w-full ${
+                isDisabled ? "bg-neutral-800 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-500"
+              }`}
+            >
+              {loadingExp || loadingStrikes ? "Please wait…" : "Submit"}
+            </button>
+          </span>
+        </label>
       </div>
+    </div>
+  </div>
+)}
 {submitted && !isGenLoading && (
 <div className="flex justify-center mb-6">
   <button
