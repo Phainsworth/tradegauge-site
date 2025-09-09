@@ -3114,7 +3114,7 @@ function renderTLDR() {
   {submitted ? (
     <>
       <h1 className="text-4xl md:text-6xl font-semibold leading-tight">
-        Here are your results
+        The Results....👀💰
       </h1>
 
       {/* three chevrons pointing down */}
