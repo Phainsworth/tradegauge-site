@@ -1421,19 +1421,28 @@ if (pnlPct != null && pnlPct >= 0.50) {
     });
 
     // ---------- Netlify OpenAI proxy helper ----------
-    const OPENAI_FN = "/.netlify/functions/openai-analyze"; // <— change if your function name differs
-    async function callOpenAIProxy(body: any) {
-      const r = await fetch(OPENAI_FN, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) {
-        const t = await r.text().catch(() => "");
-        throw new Error(`OpenAI proxy ${r.status} ${t}`.trim());
-      }
-      return await r.json();
-    }
+const OPENAI_FN = "/.netlify/functions/openai-analyze"; // <— change if your function name differs
+async function callOpenAIProxy(body: any) {
+  const r = await fetch(OPENAI_FN, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...body,
+      context: {
+        ...(body?.context || {}),
+        hints: [
+          ...(body?.context?.hints || []),
+          ...(profitHint ? [profitHint] : []),
+        ],
+      },
+    }),
+  });
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    throw new Error(`OpenAI proxy ${r.status} ${t}`.trim());
+  }
+  return await r.json();
+}
 
     async function callOpenAI(useStrictJson: boolean) {
       return await callOpenAIProxy({
