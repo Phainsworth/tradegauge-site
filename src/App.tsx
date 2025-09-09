@@ -2403,6 +2403,44 @@ async function fetchUpcomingMacro() {
       }
       filtered.push(e);
     }
+     // Collapse multiple FOMC items that share the same date into one summary row
+function collapseFomcSameDay(list: EconEvent[]): EconEvent[] {
+  const byDate: Record<string, EconEvent[]> = {};
+  for (const e of list) (byDate[e.date] ||= []).push(e);
+
+  // preserve date order based on original list
+  const dateOrder: string[] = [];
+  for (const e of list) if (!dateOrder.includes(e.date)) dateOrder.push(e.date);
+
+  const isFed = (t: string) =>
+    /fomc|federal\s+funds\s+rate|press\s+conference|economic\s+projections/i.test(t);
+
+  const out: EconEvent[] = [];
+  for (const d of dateOrder) {
+    const items = byDate[d] || [];
+    const feds = items.filter(x => isFed(x.title));
+    const nonFeds = items.filter(x => !isFed(x.title));
+
+    if (feds.length >= 2) {
+      const hasProj = feds.some(x => /projection/i.test(x.title));
+      out.push({
+        title: hasProj
+          ? "FOMC Day (Statement, Rate, Projections, Presser)"
+          : "FOMC Day (Statement, Rate, Presser)",
+        date: d,
+        time: "14:00",
+      });
+    } else {
+      out.push(...feds);
+    }
+    out.push(...nonFeds);
+  }
+
+  // sort again by date+time to be safe
+  out.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+  return out;
+}
+
 // Cap to the next 10 items
 const top = filtered.slice(0, 10);
 setEconEvents(top);
