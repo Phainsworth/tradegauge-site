@@ -3174,68 +3174,72 @@ function renderTLDR() {
     // void loadExpirations(sym.toUpperCase());
   }}
 />
-            <Select
-              label="Option Type"
-              name="type"
-               disabled={submitted}
-              value={form.type}
-              onChange={onChange}
-              options={["", "CALL", "PUT"]}
-              className="solid-input"
-            />
-            <Select
-              label={`Strike${loadingStrikes ? " (loading…)" : ""}`}
-              name="strike"
-              value={form.strike}
-               disabled={submitted}
-              onChange={onChange}
-              options={strikes.length ? ["", ...strikes.map((n) => String(n))] : [""]}
-              className="solid-input"
-            />
-            <Select
-              label={`Expiration${loadingExp ? " (loading…)" : ""}`}
-              name="expiry"
-              value={form.expiry}
-               disabled={submitted}
-              onChange={onChange}
-              options={expirations.length ? ["", ...expirations] : [""]}
-              className="solid-input"
-              renderAsDate
-            />
-            <Input
-              label="Price Paid (optional)"
-              name="pricePaid"
-              type="number"
-              value={form.pricePaid}
-               disabled={submitted}
-              onChange={onChange}
-              placeholder="1.00, 2.10 etc"
-              min="0"
-              step="0.01"
-              className="solid-input"
-            />
-            <label className="flex flex-col text-sm md:self-end">
-              <span className="invisible mb-1">Submit</span>
-              <span
-                className="block"
-                title={isDisabled ? "Please fill in inputs with valid data" : undefined}
-              >
-                <button
-                  onClick={handleSubmit}
-                  disabled={isDisabled}
-                  className={`h-12 rounded-xl font-medium w-full ${
-                    isDisabled ? "bg-neutral-800 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-500"
-                  }`}
-                >
-                  {loadingExp || loadingStrikes ? "Please wait…" : "Submit"}
-                </button>
-              </span>
-            </label>
-          </div>
-        </div>
-      </div>
-{submitted && !isGenLoading && (
-<div className="flex justify-center mb-6">
+{/* --- INPUT FORM CLUSTER (wrapped to allow overlay lock) --- */}
+<div className="relative">
+  <Select
+    label="Option Type"
+    name="type"
+    disabled={submitted}
+    value={form.type}
+    onChange={onChange}
+    options={["", "CALL", "PUT"]}
+    className="solid-input"
+  />
+  <Select
+    label={`Strike${loadingStrikes ? " (loading…)" : ""}`}
+    name="strike"
+    value={form.strike}
+    disabled={submitted}
+    onChange={onChange}
+    options={strikes.length ? ["", ...strikes.map((n) => String(n))] : [""]}
+    className="solid-input"
+  />
+  <Select
+    label={`Expiration${loadingExp ? " (loading…)" : ""}`}
+    name="expiry"
+    value={form.expiry}
+    disabled={submitted}
+    onChange={onChange}
+    options={expirations.length ? ["", ...expirations] : [""]}
+    className="solid-input"
+    renderAsDate
+  />
+  <Input
+    label="Price Paid (optional)"
+    name="pricePaid"
+    type="number"
+    value={form.pricePaid}
+    disabled={submitted}
+    onChange={onChange}
+    placeholder="1.00, 2.10 etc"
+    min="0"
+    step="0.01"
+    className="solid-input"
+  />
+
+  <label className="flex flex-col text-sm md:self-end">
+    <span className="invisible mb-1">Submit</span>
+    <span
+      className="block"
+      title={isDisabled ? "Please fill in inputs with valid data" : undefined}
+    >
+      <button
+        onClick={handleSubmit}
+        disabled={isDisabled}
+        className={`h-12 rounded-xl font-medium w-full ${
+          isDisabled ? "bg-neutral-800 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-500"
+        }`}
+      >
+        {loadingExp || loadingStrikes ? "Please wait…" : "Submit"}
+      </button>
+    </span>
+  </label>
+
+  {/* Overlay that locks inputs AFTER submit completes loading */}
+  {submitted && !isGenLoading && (
+    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm cursor-not-allowed z-50" />
+  )}
+</div>
   <button
     onClick={hardReset}
     className="inline-flex items-center gap-2 rounded-xl border border-purple-500 bg-neutral-900/70 backdrop-blur px-4 py-2 text-sm text-purple-300 hover:bg-purple-500/10 hover:shadow-[0_0_10px_rgba(168,85,247,0.6)] active:scale-[0.99] transition"
