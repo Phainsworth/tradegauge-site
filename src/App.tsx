@@ -3217,14 +3217,14 @@ function renderTLDR() {
 {!submitted && (
   <div className="text-center text-neutral-600 text-xs pb-10 relative z-10">
     <div className="inline-flex items-center gap-2">
-      <span>v1.1</span>
+      <span>v1.2</span>
       <span className="text-neutral-700">•</span>
       <span>Powered by AI</span>
       <span className="text-neutral-700">•</span>
 
       <details className="inline-block">
         <summary className="inline-flex items-center gap-1 cursor-pointer text-neutral-400 hover:text-neutral-300 list-none">
-          Patch notes
+          Patch Notes
           <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
           </svg>
@@ -3251,7 +3251,7 @@ function renderTLDR() {
       </details>
 
       <span className="text-neutral-700">•</span>
-      <span>Data you enter is not saved</span>
+      <span>Data You Enter Is Not Saved</span>
     </div>
   </div>
 )}
