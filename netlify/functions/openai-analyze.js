@@ -31,8 +31,14 @@ export async function handler(event, context) {
 
   // Parse body safely
   let payload = {};
+  let userHints = [];
   try {
     payload = JSON.parse(event.body || "{}");
+
+    // Extract hints array if present
+    userHints = Array.isArray(payload?.context?.hints)
+      ? payload.context.hints.filter(Boolean)
+      : [];
   } catch (e) {
     console.error("[OPENAI] Bad JSON body:", e?.message);
     return {
@@ -40,6 +46,29 @@ export async function handler(event, context) {
       headers: okHeaders(origin),
       body: JSON.stringify({ ok: false, error: "bad_json" }),
     };
+  }
+
+  // Build user message object that always includes hints
+  const messages = (payload.messages || []).map((m) => ({ ...m }));
+  // If last user message is JSON, merge hints
+  if (messages.length) {
+    const last = messages[messages.length - 1];
+    try {
+      const parsed = JSON.parse(last.content);
+      const merged = {
+        ...parsed,
+        context: {
+          ...(parsed.context || {}),
+          hints: userHints,
+        },
+      };
+      last.content = JSON.stringify(merged);
+    } catch {
+      // if not JSON, just append hints separately
+      if (userHints.length) {
+        last.content += `\n\nHints:\n${userHints.join("\n")}`;
+      }
+    }
   }
 
   // Call OpenAI
@@ -53,7 +82,7 @@ export async function handler(event, context) {
       model: payload.model || "gpt-4o-mini",
       temperature: payload.temperature ?? 0.3,
       max_tokens: payload.max_tokens ?? 800,
-      messages: payload.messages || [],
+      messages,
     }),
   });
 
