@@ -1295,19 +1295,6 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
     const consideringEntry = form.pricePaid === "" || form.pricePaid == null;
 
     setIsGenLoading(true);
-    setLlmStatus("Analyzing…");
-// --- Profit-protection hint when up big ---
-const toNum_safe = (x: any) => {
-  const n = Number(x);
-  return Number.isFinite(n) ? n : null;
-};
-
-// If up 50% or more, generate a strong hint
-let profitHint: string | null = null;
-if (pnlPct != null && pnlPct >= 0.50) {
-  profitHint =
-    "User is up ≥50% on this contract. Emphasize paying yourself and not letting it round-trip to red. Suggest partial take-profit (e.g., 1/3–1/2), trail stop above breakeven (breakeven + slippage), and a time stop (e.g., 1 week before expiry or ahead of high-impact macro). Avoid adding risk.";
-}
      
      function parsePlanJSON(txt: string): PlanOut | null {
   try {
@@ -1515,7 +1502,14 @@ async function callOpenAIProxy(body: any) {
     const pnlPct = Number.isFinite(paidVal) && Number.isFinite(markNow)
       ? ((markNow - paidVal) / paidVal) * 100
       : null;
+// status + profit-protection hint (after pnl% exists)
+setLlmStatus("Analyzing…");
 
+let profitHint: string | null = null;
+if (pnlPct != null && pnlPct >= 50) {
+  profitHint =
+    "User is up ≥50% on this contract. Emphasize paying yourself and not letting it round-trip to red. Suggest partial take-profit (e.g., 1/3–1/2), trail a stop above breakeven (breakeven + slippage), and consider a time stop (e.g., a week before expiry or ahead of high-impact macro). Avoid adding risk.";
+}
     const dteForNudge = Number.isFinite((daysToExpiry as any)) ? (daysToExpiry as number) : 999;
 
     let cushionN = 0;
