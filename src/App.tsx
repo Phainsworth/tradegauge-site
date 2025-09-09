@@ -3755,6 +3755,13 @@ const mkDate = (e: any) => {
       const ms = dt.getTime() - now.getTime();
       return ms >= 0 && ms <= n * 86400000;
     };
+   // Impact → numeric (3=HIGH, 2=MED, 1=LOW)
+const impactNum = (title: string): number => {
+  const t = title.toLowerCase();
+  if (t.includes("cpi") || t.includes("fomc") || t.includes("federal funds") || t.includes("press conference")) return 3;
+  if (t.includes("ppi") || t.includes("retail sales") || t.includes("jobless claims")) return 2;
+  return 1;
+};
     const riskBadge = (title: string) => {
       const t = title.toLowerCase();
       if (t.startsWith("cpi") || t.includes("personal income") || t.includes("pce")) return ["HIGH", "bg-red-900/40 text-red-300"];
@@ -3835,7 +3842,21 @@ const buildDangerWindows = (
   if (/fomc|federal\s+reserve/i.test(e.title)) {
     // Keep decision / presser / statement explicitly
     if (/(rate|decision|press|conference|statement|federal\s+funds\s+rate)/i.test(e.title)) return true;
+// Precompute max impact for each day index 0..14 using the rows we’ll show
+const dayImpact: Record<number, number> = {};
+for (const e of cleaned) {
+  const d = daysFromNow(e.date);
+  if (d >= 0 && d <= withinDays) {
+    const s = impactNum(e.title);
+    dayImpact[d] = Math.max(dayImpact[d] || 0, s);
+  }
+}
 
+// Map impact → Tailwind size class
+const dotSize = (d: number) => {
+  const lvl = dayImpact[d] || 0;
+  return lvl >= 3 ? "w-4 h-4" : lvl === 2 ? "w-3 h-3" : "w-2 h-2";
+};
     // Optional: still favor Wednesday (decision day) if you prefer
     const dt = new Date(`${e.date}T00:00:00Z`);
     const isWed = dt.getUTCDay() === 3;
