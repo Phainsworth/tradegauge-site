@@ -1971,9 +1971,10 @@ async function loadStrikesForExpiry(tkr: string, type: "CALL" | "PUT", expiryYMD
   }
 }
 
-async function loadStrikesAllExpiries(tkr: string, type?: "CALL" | "PUT") {
-  // Guard: missing type/ticker -> clear both and bail
-  if (!tkr || !type) {
+// Load strikes ONLY for the chosen expiry (no cross-expiry bleed)
+async function loadStrikesForExpiry(tkr: string, type: "CALL" | "PUT", expiryYMD: string) {
+  // Guard
+  if (!tkr || !type || !expiryYMD) {
     setAllStrikes([]);
     setStrikes([]);
     return;
@@ -1981,91 +1982,66 @@ async function loadStrikesAllExpiries(tkr: string, type?: "CALL" | "PUT") {
 
   setLoadingStrikes(true);
   try {
-    // 1) Fetch full chain and normalize to a sorted, unique number list
+    // 1) Pull full chain once (cached) and isolate the single expiry node
     const data = await fetchOptionChain(tkr);
-    const allLegs: any[] = [];
-    for (const node of data) allLegs.push(...extractLegsForType(node, type));
+    const target = (data || []).find(
+      (node: any) => normalizeExpiry(getExpirationRaw(node)) === expiryYMD
+    );
 
-const list: number[] = Array.from(
-  new Set(
-    allLegs
-      .map((o: any) => Number(o?.strike ?? o?.strikePrice))
-      .filter((n: number) => Number.isFinite(n) && n > 0)
-  )
-).sort((a, b) => a - b);
+    const legs = target ? extractLegsForType(target, type) : [];
 
-     // Derive a live spot from the options payload (many APIs include an underlying/spot on each leg)
-const spotCandidates = allLegs
-  .map((o: any) =>
-    Number(
-      o?.underlying ??
-      o?.underlyingPrice ??
-      o?.underlying_price ??
-      o?.underlyingPriceUSD ??
-      o?.uPrice
-    )
-  )
-  .filter((n: number) => Number.isFinite(n) && n > 0);
+    // 2) Map to real strike prices for that expiry only (keep decimals like 172.5)
+    const list: number[] = Array.from(
+      new Set(
+        legs
+          .map((o: any) => Number(o?.strike ?? o?.strikePrice))
+          .filter((n) => Number.isFinite(n) && n > 0)
+      )
+    ).sort((a, b) => a - b);
 
-const derivedSpot = median(spotCandidates);
-
-// Only set if found, and race-guard so late responses from the previous ticker don't overwrite
-const currentTicker =
-  (typeof symbol === "string" && symbol) ||
-  (typeof tkr === "string" && tkr) ||
-  (form?.ticker ?? "");
-
-if (derivedSpot != null) {
-  setForm((f) =>
-    String(f?.ticker || "").toUpperCase() === String(currentTicker || "").toUpperCase()
-      ? { ...f, spot: String(derivedSpot) }
-      : f
-  );
-}
-    // Store the raw, full list
+    // Save the full per-expiry list
     setAllStrikes(list);
 
-    // Debug counters
-    console.log("[chain] strikes total:", list.length, "spot:", form.spot, "showAll:", showAllStrikes);
+    // 3) Build the visible window (≈ STRIKES_EACH_SIDE around spot/current)
+    const spotNum =
+      form.spot !== "" && Number.isFinite(Number(form.spot)) && Number(form.spot) > 0
+        ? Number(form.spot)
+        : null;
 
-   const spotNum =
-  form.spot !== "" && Number.isFinite(Number(form.spot)) && Number(form.spot) > 0
-    ? Number(form.spot)
-    : null;
+    const curr =
+      Number.isFinite(Number(form.strike)) && Number(form.strike) > 0
+        ? Number(form.strike)
+        : null;
 
-const curr =
-  Number.isFinite(Number(form.strike)) && Number(form.strike) > 0
-    ? Number(form.strike)
-    : null;
+    let view = showAllStrikes
+      ? [...list]
+      : filterStrikesForView({
+          spot: spotNum,
+          all: list,
+          current: curr,               // keep the current selection visible if still valid
+          eachSide: STRIKES_EACH_SIDE, // same windowing you already use
+        });
 
-let view = showAllStrikes
-  ? [...list]
-  : filterStrikesForView({
-      spot: spotNum,
-      all: list,
-      current: curr,                 // keep current selection visible
-      eachSide: STRIKES_EACH_SIDE,   // fixed count each side
-    });
-
-    // 3) Safety: never render an empty dropdown — fall back to full list
-    if (!Array.isArray(view) || view.length === 0) {
-      console.warn("[chain] loader view empty; falling back to full list");
-      view = [...list];
-    }
+    // Safety: never render empty; fall back to full list
+    if (!Array.isArray(view) || view.length === 0) view = [...list];
     if (curr != null && !view.includes(curr)) view.push(curr);
     view.sort((a, b) => a - b);
-
-    console.log("[chain] view count:", view.length);
     setStrikes(view);
+
+    // 4) If the old strike isn’t listed on this expiry, clear it (auto-select will repopulate)
+    if (!list.includes(Number(form.strike))) {
+      strikeTouchedRef.current = false; // allow auto-select to kick in
+      setForm((f) => ({ ...f, strike: "" }));
+    }
   } catch (e) {
-    addDebug("loadStrikesAllExpiries error", e);
-    // Be graceful on failure
+    console.warn("[strikes] loadStrikesForExpiry error:", e);
     setAllStrikes([]);
     setStrikes([]);
   } finally {
     setLoadingStrikes(false);
   }
 }
+
 
 
  // Spot (Finnhub) — via Netlify proxy (no FINNHUB_KEY in browser)
