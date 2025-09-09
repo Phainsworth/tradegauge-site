@@ -3719,7 +3719,13 @@ const mkDate = (e: any) => {
     const riskBadge = (title: string) => {
       const t = title.toLowerCase();
       if (t.startsWith("cpi") || t.includes("personal income") || t.includes("pce")) return ["HIGH", "bg-red-900/40 text-red-300"];
-      if (t.startsWith("fomc") || t.includes("powell")) return ["MED", "bg-amber-900/40 text-amber-300"];
+      if (
+  t.startsWith("fomc") ||
+  t.includes("powell") ||
+  t.includes("federal funds rate") ||
+  t.includes("press conference") ||
+  t.includes("economic projections")
+) return ["MED", "bg-amber-900/40 text-amber-300"];
       if (t.includes("retail sales") || t.startsWith("ppi")) return ["MED", "bg-amber-900/40 text-amber-300"];
       if (t.startsWith("jobless") || t.includes("claims")) return ["LOW", "bg-neutral-800 text-neutral-300"];
       return ["—", "bg-neutral-800 text-neutral-400"];
@@ -3801,7 +3807,9 @@ const buildDangerWindows = (
       .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))
       .slice(0, 10); // cap to next 10
 
-    const fedCount   = cleaned.filter((e) => /^FOMC\b/i.test(e.title) || /powell/i.test(e.title)).length;
+    const fedCount = cleaned.filter((e) =>
+  /fomc|federal\s+funds\s+rate|press\s+conference|economic\s+projections|powell/i.test(e.title)
+).length;
     const macroCount = cleaned.length;
 
     // --- timeline data ---
