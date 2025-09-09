@@ -1,7 +1,7 @@
 // netlify/functions/fomc-schedule.js
-// Scrape the Fed's "Meeting calendars and information" page and emit the NEXT decision-day drops.
-// Free, no API key. Robust against HTML in tables and ignores "Minutes/Released/Last Update" timestamps.
-// Output: { ok: true, events: [{ title, date:"YYYY-MM-DD", time:"HH:MM" }, ...] }
+// Scrape the Fed's "Meeting calendars and information" page and emit decision-day drops
+// ONLY if the decision date is within the next WINDOW_DAYS (default 14) from today (local).
+// Output: { ok: true, events: [{ title, date:"YYYY-MM-DD", time:"HH:MM" }, ...] }  or events: []
 
 exports.handler = async () => {
   const headers = {
@@ -11,6 +11,8 @@ exports.handler = async () => {
   };
 
   try {
+    const WINDOW_DAYS = 14; // <— adjust if you want a bigger/smaller window
+
     const url = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm";
     const res = await fetch(url, { redirect: "follow" });
     if (!res.ok) throw new Error("fed page " + res.status);
@@ -20,16 +22,12 @@ exports.handler = async () => {
     const MONTH =
       "(January|February|March|April|May|June|July|August|September|October|November|December)";
     const DASH = "(?:–|—|-|&ndash;|&mdash;)";
-    // Allow up to ~80 chars (including tags/newlines) between tokens inside a row/cell
-    const GAP = "[\\s\\S]{0,80}";
+    const GAP = "[\\s\\S]{0,80}"; // tolerate HTML/tags between tokens
 
     // Same-month ranges with tags: e.g., "September" ... "16–17"
-    const RX_RANGE_SAME = new RegExp(`${MONTH}${GAP}(\\d{1,2})${GAP}${DASH}${GAP}(\\d{1,2})`, "gi");
-    // Cross-month ranges with tags: e.g., "January 31 – February 1"
-    const RX_RANGE_XMON = new RegExp(
-      `${MONTH}${GAP}(\\d{1,2})${GAP}${DASH}${GAP}${MONTH}${GAP}(\\d{1,2})`,
-      "gi"
-    );
+    const RX_RANGE_SAME = new RegExp(`${MONTH}\\.?${GAP}(\\d{1,2})${GAP}${DASH}${GAP}(\\d{1,2})`, "gi");
+    // Cross-month ranges: e.g., "January 31 – February 1"
+    const RX_RANGE_XMON = new RegExp(`${MONTH}${GAP}(\\d{1,2})${GAP}${DASH}${GAP}${MONTH}${GAP}(\\d{1,2})`, "gi");
 
     const monthIdx = {
       January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
@@ -43,7 +41,7 @@ exports.handler = async () => {
       return `${yyyy}-${mm}-${dd}`;
     };
 
-    // --- Grab only the "20xx FOMC Meetings" sections (avoid "Last Update", "Minutes Released", etc.)
+    // --- only parse "20xx FOMC Meetings" sections (skip "Last Update", "Minutes Released", etc.)
     const secRe = /(\d{4})\s*FOMC Meetings([\s\S]*?)(?=\d{4}\s*FOMC Meetings|Back to Top|<\/footer>|$)/gi;
     const sections = [];
     for (let m; (m = secRe.exec(html)); ) {
@@ -51,7 +49,7 @@ exports.handler = async () => {
     }
     if (!sections.length) throw new Error("no FOMC Meetings sections found");
 
-    // Keep current + next year sections
+    // keep current + next year sections
     const today = new Date();
     const curY = today.getFullYear();
     const target = sections.filter(s => s.year === curY || s.year === curY + 1);
@@ -63,19 +61,17 @@ exports.handler = async () => {
       const y = sec.year;
       const body = sec.body;
 
-      // SAME-MONTH ranges
+      // SAME-MONTH ranges → keep later day
       for (let m; (m = RX_RANGE_SAME.exec(body)); ) {
         const monthName = m[1];
-        const d2 = m[2] && m[3] ? m[3] : m[2]; // defensive, but m[3] should exist per regex
+        const d2 = m[3]; // later day
         const idx = m.index ?? 0;
         const slice = body.slice(Math.max(0, idx - 60), idx + 120);
-        // Ignore rows that are clearly minutes/updates
-        if (/minutes|released|last\s+update/i.test(slice)) continue;
-        // If the month name is followed by a period "January." it still matches due to GAP
+        if (/minutes|released|last\s+update/i.test(slice)) continue; // ignore non-meeting rows
         candidates.push({ iso: toISO(y, monthName, d2), year: y });
       }
 
-      // CROSS-MONTH ranges (rare; keep the second month/day)
+      // CROSS-MONTH ranges → keep second month/day
       for (let m; (m = RX_RANGE_XMON.exec(body)); ) {
         const monthName2 = m[4];
         const d2 = m[5];
@@ -86,7 +82,9 @@ exports.handler = async () => {
       }
     }
 
-    if (!candidates.length) throw new Error("no meeting ranges found in sections");
+    if (!candidates.length) {
+      return { statusCode: 200, headers, body: JSON.stringify({ ok: true, events: [] }) };
+    }
 
     // de-dup + sort
     const seen = new Set();
@@ -96,10 +94,21 @@ exports.handler = async () => {
       return true;
     }).sort((a, b) => a.iso.localeCompare(b.iso));
 
-    // pick first date >= today (local midnight)
-    const todayLocal = new Date(curY, today.getMonth(), today.getDate()).getTime();
-    let chosen = uniq.find(c => new Date(c.iso + "T00:00:00").getTime() >= todayLocal)?.iso;
-    if (!chosen) chosen = uniq[uniq.length - 1].iso;
+    // --- restrict to next WINDOW_DAYS from today (local)
+    const start = new Date(curY, today.getMonth(), today.getDate()).getTime(); // today 00:00 local
+    const end = start + WINDOW_DAYS * 86_400_000; // exclusive upper bound
+    const inWindow = uniq.filter(c => {
+      const t = new Date(c.iso + "T00:00:00").getTime();
+      return t >= start && t < end;
+    });
+
+    if (!inWindow.length) {
+      // Nothing within the window → return empty list
+      return { statusCode: 200, headers, body: JSON.stringify({ ok: true, events: [] }) };
+    }
+
+    // choose the earliest within the window
+    const chosen = inWindow[0].iso;
 
     // build decision-day drops
     const monthNum = parseInt(chosen.slice(5, 7), 10); // 1..12
