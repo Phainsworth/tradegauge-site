@@ -2613,7 +2613,6 @@ if (name === "ticker" || name === "type" || name === "expiry") {
   setEarnings(null);
 }
 setSubmitted(false);
-Promise.resolve().then(() => hardReset());
 };
 // Populate macro (FOMC/CPI/etc.) on app load + refresh every 6h
 useEffect(() => {
