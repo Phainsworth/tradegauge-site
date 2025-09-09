@@ -3199,10 +3199,10 @@ function renderTLDR() {
         </div>
       </div>
 {submitted && !isGenLoading && (
-<div className="flex justify-center">
+<div className="flex justify-center mb-6">
   <button
     onClick={resetToHome}
-    className="inline-flex items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-900/70 backdrop-blur px-4 py-2 text-sm text-neutral-200 hover:bg-neutral-800/80 active:scale-[0.99] transition"
+    className="inline-flex items-center gap-2 rounded-xl border border-purple-500 bg-neutral-900/70 backdrop-blur px-4 py-2 text-sm text-purple-300 hover:bg-purple-500/10 hover:shadow-[0_0_10px_rgba(168,85,247,0.6)] active:scale-[0.99] transition"
     title="Clear and start a fresh check"
     aria-label="Try another contract"
   >
