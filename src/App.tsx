@@ -3974,10 +3974,10 @@ const sizeForItems = (items: { title: string }[]) => {
     return (
       <div key={`dot-${d}`} className="relative group">
         <div
-          className={`w-2 h-2 rounded-full ${d === 0 ? "bg-neutral-200" : color}`}
-          title={dateLabel}
-          aria-label={dateLabel}
-        />
+  className={`${sizeForItems(items)} rounded-full ${d === 0 ? "bg-neutral-200" : color}`}
+  title={dateLabel}
+  aria-label={dateLabel}
+/>
         {/* unified tooltip for ALL days */}
         <div className="absolute left-1/2 -translate-x-1/2 -translate-y-full -top-2 hidden group-hover:block bg-neutral-900 text-neutral-200 text-[11px] leading-tight rounded-md shadow-xl border border-neutral-800 px-2 py-1 whitespace-nowrap z-10">
           <div className="font-medium text-neutral-100 mb-0.5">{dateLabel}</div>
