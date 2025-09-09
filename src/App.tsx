@@ -3504,66 +3504,65 @@ function renderTLDR() {
       </div>
 
 {/* My pick */}
-<div className="mt-2 p-2 rounded-lg border border-amber-400/70 bg-neutral-900/50">
-  <div className="uppercase text-xs tracking-widest text-amber-300">If it was me</div>
-  <div className="mt-1">
-    <span className="font-medium">
-      {routes.routes[routes.pick.route].action}
-    </span>
-    <span className="text-neutral-300"> — {routes.pick.reason}</span>
-  </div>
-</div>
+{routes && routes.pick && routes.routes && (
+  <div className="mt-2 p-2 rounded-lg border border-amber-400/70 bg-neutral-900/50">
+    <div className="uppercase text-xs tracking-widest text-amber-300">If it was me</div>
+    <div className="mt-1">
+      <span className="font-medium">
+        {routes.routes?.[routes.pick.route]?.action}
+      </span>
+      <span className="text-neutral-300"> — {routes.pick.reason}</span>
     </div>
-  )}
-</div>
-   )}
+  </div>
+)}
+
+{/* Plan cards */}
 {plan && (
-  <div className="grid gap-4 md:grid-cols-3 mb-4">
-{/* What I like */}
-<div className="rounded-2xl ring-1 ring-emerald-400/70 shadow-[0_0_20px_-10px_rgba(16,185,129,0.5)]">
-  <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
-    <div className="text-sm font-semibold text-neutral-200 mb-2">
-      What I like about this contract
+  <div className="grid gap-4 md:grid-cols-3 mb-4 mt-4">
+    {/* What I like */}
+    <div className="rounded-2xl ring-1 ring-emerald-400/70 shadow-[0_0_20px_-10px_rgba(16,185,129,0.5)]">
+      <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
+        <div className="text-sm font-semibold text-neutral-200 mb-2">
+          What I like about this contract
+        </div>
+        <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
+          {(Array.isArray(plan.likes) ? plan.likes : []).map((s, i) => (
+            <li key={i} className="text-sm">{capFirst(s)}</li>
+          ))}
+        </ul>
+      </div>
     </div>
-    <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
-      {plan.likes.map((s, i) => (
-        <li key={i} className="text-sm">
-          {capFirst(s)}
-        </li>
-      ))}
-    </ul>
-  </div>
-</div>
 
-{/* Watch-outs */}
-<div className="rounded-2xl ring-1 ring-red-400/70 shadow-[0_0_20px_-10px_rgba(245,158,11,0.55)]">
-  <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
-    <div className="text-sm font-semibold text-neutral-200 mb-2">
-      What to watch out for
+    {/* Watch-outs */}
+    <div className="rounded-2xl ring-1 ring-red-400/70 shadow-[0_0_20px_-10px_rgba(245,158,11,0.55)]">
+      <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
+        <div className="text-sm font-semibold text-neutral-200 mb-2">
+          What to watch out for
+        </div>
+        <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
+          {(Array.isArray(plan.watchouts) ? plan.watchouts : []).map((s, i) => (
+            <li key={i} className="text-sm">{capFirst(s)}</li>
+          ))}
+        </ul>
+      </div>
     </div>
-    <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
-      {plan.watchouts.map((s, i) => (
-        <li key={i} className="text-sm">
-          {capFirst(s)}
-        </li>
-      ))}
-    </ul>
-  </div>
-</div>
 
-{/* What I’d do */}
-<div className="rounded-2xl ring-1 ring-yellow-400/70 shadow-[0_0_22px_-10px_rgba(234,179,8,0.55)]">
-  <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
-    <div className="text-sm font-semibold text-neutral-200 mb-2">
-      What I’d do (middle-risk, no prices)
+    {/* What I’d do */}
+    <div className="rounded-2xl ring-1 ring-yellow-400/70 shadow-[0_0_22px_-10px_rgba(234,179,8,0.55)]">
+      <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
+        <div className="text-sm font-semibold text-neutral-200 mb-2">
+          What I’d do (middle-risk, no prices)
+        </div>
+        <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-line">
+          {capFirst(plan.plan)}
+        </p>
+      </div>
     </div>
-    <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-line">
-      {capFirst(plan.plan)}
-    </p>
   </div>
-</div>
+)}
 
 {/* Save & Share */}
+<div className="mt-3 flex justify-end">
   <button
     className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs"
     onClick={() => {
@@ -3576,9 +3575,10 @@ function renderTLDR() {
     Share Link
   </button>
 </div>
-</div>
+
 </MiniCard>
-          {/* DASH GRID: Greeks + Quick Stats */}
+
+{/* DASH GRID: Greeks + Quick Stats */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* GREEKS */}
             <MiniCard title="Greeks Explained">
