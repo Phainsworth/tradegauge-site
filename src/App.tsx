@@ -2394,44 +2394,15 @@ async function fetchUpcomingMacro() {
     events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
 
 // De-noise spammy releases:
-// - FOMC: keep decision Wednesdays even if Tuesday isn't in the feed
-// - Jobless Claims: Thu only
-const isFomc = (t: string) =>
-  /fomc|federal\s+funds\s+rate|federal\s+reserve|rate\s+decision|statement|press\s+conference/i.test(t);
-
-const fomcAll = events.filter(e => isFomc(e.title));
-const fomcDates = new Set(fomcAll.map(e => e.date));
-const fomcDecisionWeds = new Set<string>();
-
-for (const e of fomcAll) {
-  const dow = new Date(e.date + "T12:00:00Z").getUTCDay(); // 0=Sun..6=Sat (no midnight DST weirdness)
-  if (dow !== 3) continue; // Wednesdays only
-  const prev = new Date(new Date(e.date + "T12:00:00Z").getTime() - 86400000)
-    .toISOString().slice(0, 10);
-  const looksDecision = /(rate|decision|federal\s+funds|statement|press\s+conference)/i.test(e.title);
-  if (looksDecision || fomcDates.has(prev)) fomcDecisionWeds.add(e.date);
-}
-
-// if a month has multiple Wednesday entries, keep the latest one
-const byMonth: Record<string, string[]> = {};
-for (const d of Array.from(fomcDecisionWeds)) (byMonth[d.slice(0,7)] ||= []).push(d);
-const fomcKeep = new Set<string>(Object.values(byMonth).map(d => d.sort().slice(-1)[0]!));
-
-const filtered: EconEvent[] = [];
-for (const e of events) {
-  const dowUTC = new Date(e.date + "T12:00:00Z").getUTCDay();
-
-  if (isFomc(e.title)) {
-    if (!fomcKeep.has(e.date)) continue;
-    if (!e.time) e.time = "14:00"; // statement time
-  }
-
-  if (/^Jobless Claims\b/i.test(e.title)) {
-    if (dowUTC !== 4) continue; // Thu only
-  }
-
-  filtered.push(e);
-}
+    // - Jobless Claims: Thu only (if it ever appears)
+    const filtered: EconEvent[] = [];
+    for (const e of events) {
+      const dowUTC = new Date(e.date + "T12:00:00Z").getUTCDay(); // 0=Sun..6=Sat (midday avoids DST slip)
+      if (/^Jobless Claims\b/i.test(e.title)) {
+        if (dowUTC !== 4) continue; // Thu only
+      }
+      filtered.push(e);
+    }
 // Cap to the next 10 items
 const top = filtered.slice(0, 10);
 setEconEvents(top);
