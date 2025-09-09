@@ -3765,13 +3765,13 @@ const impactNum = (title: string): number => {
     const riskBadge = (title: string) => {
       const t = title.toLowerCase();
       if (t.startsWith("cpi") || t.includes("personal income") || t.includes("pce")) return ["HIGH", "bg-red-900/40 text-red-300"];
-      if (
+if (
   t.startsWith("fomc") ||
   t.includes("powell") ||
   t.includes("federal funds rate") ||
   t.includes("press conference") ||
   t.includes("economic projections")
-) return ["MED", "bg-amber-900/40 text-amber-300"];
+) return ["HIGH", "bg-red-900/40 text-red-300"];
       if (t.includes("retail sales") || t.startsWith("ppi")) return ["MED", "bg-amber-900/40 text-amber-300"];
       if (t.startsWith("jobless") || t.includes("claims")) return ["LOW", "bg-neutral-800 text-neutral-300"];
       return ["—", "bg-neutral-800 text-neutral-400"];
@@ -3901,18 +3901,22 @@ const dotSize = (d: number) => {
       }
     };
 
-    // Dot color by highest-risk item on that day
-    const colorForItems = (items: { title: string }[]) => {
-      const t = (s: string) => s.toLowerCase();
-      const has = (k: string) => items.some((it) => t(it.title).includes(k));
-      if (has("cpi") || has("pce") || has("rate decision") || has("fomc") || has("federal reserve")) {
-        return "bg-red-400";    // big
-      }
-      if (has("ppi") || has("retail sales")) {
-        return "bg-yellow-300"; // medium
-      }
-      return "bg-neutral-400";  // fallback (shouldn’t hit often due to filter)
-    };
+// Dot color by highest-risk item on that day
+const colorForItems = (items: { title: string }[]) => {
+  const t = (s: string) => s.toLowerCase();
+  const has = (k: string) => items.some((it) => t(it.title).includes(k));
+
+  // HIGH: CPI or any FOMC-related item
+  if (has("cpi") || has("fomc") || has("federal funds") || has("press conference") || has("economic projections"))
+    return "bg-red-500/70";
+
+  // MED: PPI, Retail Sales, Jobless Claims
+  if (has("ppi") || has("retail sales") || has("jobless claims"))
+    return "bg-amber-500/70";
+
+  // LOW/none
+  return "bg-neutral-600";
+};
 // Dot size by highest-impact item on that day
 const sizeForItems = (items: { title: string }[]) => {
   const t = (s: string) => s.toLowerCase();
