@@ -3576,6 +3576,7 @@ function renderTLDR() {
   </button>
 </div>
 
+{/* Close the Routes/Plan card */}
 </MiniCard>
 
 {/* DASH GRID: Greeks + Quick Stats */}
