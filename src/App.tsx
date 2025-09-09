@@ -4071,7 +4071,7 @@ const dotSize = (d: number) => {
     }
 
     // fallback dot
-    return <div className="w-2 h-2 rounded-full bg-neutral-500" />;
+    return <div className={`${dotSize(i)} rounded-full bg-neutral-500`} />;
   };
 
   if (cleaned.length) {
