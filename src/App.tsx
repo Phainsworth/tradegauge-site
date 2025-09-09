@@ -2441,8 +2441,9 @@ function collapseFomcSameDay(list: EconEvent[]): EconEvent[] {
   return out;
 }
 
-// Cap to the next 10 items
-const top = filtered.slice(0, 10);
+// Collapse FOMC clusters → then cap to next 10
+const collapsed = collapseFomcSameDay(filtered);
+const top = collapsed.slice(0, 10);
 setEconEvents(top);
 
 try { localStorage.setItem("fredEventsCacheV1", JSON.stringify(top)); } catch {}
