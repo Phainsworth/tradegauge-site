@@ -3733,10 +3733,12 @@ const mkDate = (e: any) => {
     };
    // ---- Danger-window helpers ----
 const daysFromNow = (isoDate: string) => {
+  // Compare local midnight → local midnight to avoid UTC off-by-one
   const today = new Date();
-  const atMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-  const d = new Date(isoDate + "T00:00:00Z").getTime();
-  return Math.floor((d - atMidnight) / 86_400_000);
+  const base = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const eventLocalMidnight = new Date(y, (m ?? 1) - 1, d ?? 1).getTime();
+  return Math.floor((eventLocalMidnight - base) / 86_400_000);
 };
 
 const windowFor = (title: string): [number, number] => {
