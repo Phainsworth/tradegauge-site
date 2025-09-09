@@ -246,6 +246,10 @@ const PATCH_NOTES: Array<{ date: string; title: string; items: string[] }> = [
 // - If user typed cents (ends with c/¢) → divide by 100.
 // - If no decimal and you have a live mark: if value > 3× mark → divide by 100.
 // - If no mark: any integer ≥ 100 → divide by 100.
+function capFirst(s: string) {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 async function finnhub(pathAndQuery: string) {
   const res = await fetch(`/.netlify/functions/finnhub-proxy?path=${encodeURIComponent(pathAndQuery)}`);
   if (!res.ok) throw new Error(`finnhub proxy failed: ${res.status}`);
@@ -265,7 +269,6 @@ function normalizePaid(raw: any, refMark?: number | null): number | null {
     const f = Number(txt);
     return Number.isFinite(f) && f > 0 ? Math.round(f * 100) / 100 : null;
   }
-
   // strip $, commas, spaces; capture explicit cents
   let s = txt.replace(/[$,\s]/g, "").toLowerCase();
   let centsFlag = false;
@@ -3523,7 +3526,9 @@ function renderTLDR() {
           What I like about this contract
         </div>
         <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
-          {plan.likes.map((s, i) => <li key={i}>{s}</li>)}
+          {plan.likes.map((t, i) => (
+  <li key={i} className="text-sm">{t}</li>
+))}
         </ul>
       </div>
     </div>
@@ -3533,7 +3538,7 @@ function renderTLDR() {
       <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
         <div className="text-sm font-semibold text-neutral-200 mb-2">What to watch out for</div>
         <ul className="list-disc pl-5 space-y-1 text-sm text-neutral-300">
-          {plan.watchouts.map((s, i) => <li key={i}>{s}</li>)}
+          {plan.watchouts.map((s, i) => <li key={i} className="text-sm">{capFirst(t)}</li>
         </ul>
       </div>
     </div>
@@ -3542,7 +3547,7 @@ function renderTLDR() {
     <div className="rounded-2xl ring-1 ring-yellow-400/70 shadow-[0_0_22px_-10px_rgba(234,179,8,0.55)]">
       <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
         <div className="text-sm font-semibold text-neutral-200 mb-2">What I’d do (middle-risk, no prices)</div>
-        <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-line">{plan.plan}</p>
+        <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-line">{capFirst(plan.plan)}</p>
       </div>
     </div>
   </div>
