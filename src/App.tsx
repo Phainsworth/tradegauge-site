@@ -3199,20 +3199,30 @@ function renderTLDR() {
         </div>
       </div>
 {submitted && !isGenLoading && (
-  <div className="max-w-5xl mx-auto px-4 -mt-2 mb-4">
-<button
-  onClick={resetToHome}
-  className="inline-flex items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-900/70 backdrop-blur px-4 py-2 text-sm text-neutral-200 hover:bg-neutral-800/80 active:scale-[0.99] transition"
-  title="Clear and start a fresh check"
-  aria-label="Try another contract"
->
-  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.25}
-      d="M12 6v6l4 2m5-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-  </svg>
-  Try another contract
-</button>
-  </div>
+<div className="flex justify-center">
+  <button
+    onClick={resetToHome}
+    className="inline-flex items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-900/70 backdrop-blur px-4 py-2 text-sm text-neutral-200 hover:bg-neutral-800/80 active:scale-[0.99] transition"
+    title="Clear and start a fresh check"
+    aria-label="Try another contract"
+  >
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className="h-4 w-4"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.25}
+        d="M12 6v6l4 2m5-2a9 9 0 11-18 0 9 9 0 0118 0z"
+      />
+    </svg>
+    Try another contract
+  </button>
+</div>
 )}
 {!submitted && (
   <div className="text-center text-neutral-600 text-xs pb-10 relative z-10">
