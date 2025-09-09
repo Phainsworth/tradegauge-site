@@ -2377,47 +2377,36 @@ events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time |
 events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
 
 // De-noise spammy releases:
-// De-noise spammy releases:
-// - FOMC: keep only *rate decision* Wednesdays (day 2 of the 2-day meeting: Tue+Wed)
-// - Jobless Claims: keep only Thursdays
+// - FOMC: keep decision Wednesdays even if Tuesday isn't in the feed
+// - Jobless Claims: Thu only
+const isFomc = (t: string) =>
+  /fomc|federal\s+funds\s+rate|federal\s+reserve|rate\s+decision|statement|press\s+conference/i.test(t);
 
-// Build FOMC keep-list: for each month, keep the latest Wednesday that follows a Tuesday FOMC
-const _fomcAll = events.filter(e => /^FOMC\b/i.test(e.title));
-const _fomcSet = new Set(_fomcAll.map(e => e.date));
-const _fomcWedCandidates = _fomcAll.filter(e => {
-  // Use 12:00Z to avoid any DST/offset weirdness around midnight
-  const dowUTC = new Date(e.date + "T12:00:00Z").getUTCDay(); // 0=Sun..6=Sat
-  if (dowUTC !== 3) return false; // we only want Wednesdays
+const fomcAll = events.filter(e => isFomc(e.title));
+const fomcDates = new Set(fomcAll.map(e => e.date));
+const fomcDecisionWeds = new Set<string>();
+
+for (const e of fomcAll) {
+  const dow = new Date(e.date + "T12:00:00Z").getUTCDay(); // 0=Sun..6=Sat (no midnight DST weirdness)
+  if (dow !== 3) continue; // Wednesdays only
   const prev = new Date(new Date(e.date + "T12:00:00Z").getTime() - 86400000)
-    .toISOString()
-    .slice(0, 10);
-  // Wednesday is valid only if the preceding Tuesday exists in the set (Tue+Wed meeting)
-  return _fomcSet.has(prev);
-});
-
-// Group by YYYY-MM and keep the latest Wednesday in that month
-const _fomcByMonth: Record<string, string[]> = {};
-for (const e of _fomcWedCandidates) {
-  const key = e.date.slice(0, 7); // "YYYY-MM"
-  (_fomcByMonth[key] ||= []).push(e.date);
-}
-const fomcKeep = new Set<string>();
-for (const m of Object.keys(_fomcByMonth)) {
-  const latest = _fomcByMonth[m].sort().slice(-1)[0];
-  if (latest) fomcKeep.add(latest);
+    .toISOString().slice(0, 10);
+  const looksDecision = /(rate|decision|federal\s+funds|statement|press\s+conference)/i.test(e.title);
+  if (looksDecision || fomcDates.has(prev)) fomcDecisionWeds.add(e.date);
 }
 
-const filtered = [];
+// if a month has multiple Wednesday entries, keep the latest one
+const byMonth: Record<string, string[]> = {};
+for (const d of Array.from(fomcDecisionWeds)) (byMonth[d.slice(0,7)] ||= []).push(d);
+const fomcKeep = new Set<string>(Object.values(byMonth).map(d => d.sort().slice(-1)[0]!));
 
+const filtered: EconEvent[] = [];
 for (const e of events) {
-  const dowUTC = new Date(e.date + "T12:00:00Z").getUTCDay(); // 0=Sun..6=Sat
+  const dowUTC = new Date(e.date + "T12:00:00Z").getUTCDay();
 
-  if (/^FOMC\b/i.test(e.title)) {
-    // Keep only “true” decision Wednesdays (computed above)
+  if (isFomc(e.title)) {
     if (!fomcKeep.has(e.date)) continue;
-
-    // Canonical statement time
-    if (!e.time) e.time = "14:00";
+    if (!e.time) e.time = "14:00"; // statement time
   }
 
   if (/^Jobless Claims\b/i.test(e.title)) {
@@ -2426,7 +2415,6 @@ for (const e of events) {
 
   filtered.push(e);
 }
-
 // Cap to the next 10 items
 const top = filtered.slice(0, 10);
 setEconEvents(top);
