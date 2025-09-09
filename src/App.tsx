@@ -2540,6 +2540,7 @@ try {
   // INPUT + EFFECTS
   // -----------------------------
 const onChange = (e: any) => {
+   if (submitted) return;
   const { name } = e.target;
   let { value } = e.target;
 
