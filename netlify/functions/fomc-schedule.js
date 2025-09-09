@@ -1,6 +1,6 @@
 // netlify/functions/fomc-schedule.js
-// Free: scrape the Fed's FOMC calendars page and emit the next decision-day drops.
-// We only parse inside the "20xx FOMC Meetings" sections and only accept range-style dates.
+// Scrape the Fed's "Meeting calendars and information" page and emit the NEXT decision-day drops.
+// Free, no API key. Robust against HTML in tables and ignores "Minutes/Released/Last Update" timestamps.
 // Output: { ok: true, events: [{ title, date:"YYYY-MM-DD", time:"HH:MM" }, ...] }
 
 exports.handler = async () => {
@@ -16,15 +16,20 @@ exports.handler = async () => {
     if (!res.ok) throw new Error("fed page " + res.status);
     const html = await res.text();
 
-    // ---- Helpers
+    // --- helpers
     const MONTH =
       "(January|February|March|April|May|June|July|August|September|October|November|December)";
     const DASH = "(?:–|—|-|&ndash;|&mdash;)";
-    // Example formats inside the Meetings sections:
-    //  "September. 16–17" or "September 16–17"  (same-month)
-    //  "January 31–February 1"                  (cross-month, rare)
-    const RX_RANGE_SAME = new RegExp(`${MONTH}\\.?\\s+(\\d{1,2})\\s*${DASH}\\s*(\\d{1,2})`, "gi");
-    const RX_RANGE_XMON = new RegExp(`${MONTH}\\s+(\\d{1,2})\\s*${DASH}\\s*${MONTH}\\s+(\\d{1,2})`, "gi");
+    // Allow up to ~80 chars (including tags/newlines) between tokens inside a row/cell
+    const GAP = "[\\s\\S]{0,80}";
+
+    // Same-month ranges with tags: e.g., "September" ... "16–17"
+    const RX_RANGE_SAME = new RegExp(`${MONTH}${GAP}(\\d{1,2})${GAP}${DASH}${GAP}(\\d{1,2})`, "gi");
+    // Cross-month ranges with tags: e.g., "January 31 – February 1"
+    const RX_RANGE_XMON = new RegExp(
+      `${MONTH}${GAP}(\\d{1,2})${GAP}${DASH}${GAP}${MONTH}${GAP}(\\d{1,2})`,
+      "gi"
+    );
 
     const monthIdx = {
       January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
@@ -38,7 +43,7 @@ exports.handler = async () => {
       return `${yyyy}-${mm}-${dd}`;
     };
 
-    // ---- Pull the “20xx FOMC Meetings” sections (avoid Last Update / Minutes dates)
+    // --- Grab only the "20xx FOMC Meetings" sections (avoid "Last Update", "Minutes Released", etc.)
     const secRe = /(\d{4})\s*FOMC Meetings([\s\S]*?)(?=\d{4}\s*FOMC Meetings|Back to Top|<\/footer>|$)/gi;
     const sections = [];
     for (let m; (m = secRe.exec(html)); ) {
@@ -46,38 +51,44 @@ exports.handler = async () => {
     }
     if (!sections.length) throw new Error("no FOMC Meetings sections found");
 
+    // Keep current + next year sections
     const today = new Date();
     const curY = today.getFullYear();
-    // Keep only current year and next year sections
-    const targetSections = sections.filter(s => s.year === curY || s.year === curY + 1);
-    if (!targetSections.length) throw new Error("no sections for current/next year");
+    const target = sections.filter(s => s.year === curY || s.year === curY + 1);
+    if (!target.length) throw new Error("no sections for current/next year");
 
-    // ---- Extract decision-day candidates from those sections
+    // --- extract decision-day candidates (later day of each meeting)
     const candidates = [];
-    for (const sec of targetSections) {
+    for (const sec of target) {
       const y = sec.year;
+      const body = sec.body;
 
-      // Same-month ranges → keep the later day
-      for (let m; (m = RX_RANGE_SAME.exec(sec.body)); ) {
-        const mName = m[1], d2 = m[3];
-        // Guard: ignore lines that contain "Minutes" or "Released" to avoid stray dates
-        const slice = sec.body.slice(Math.max(0, m.index - 40), m.index + 80);
-        if (/minutes|released/i.test(slice)) continue;
-        candidates.push({ iso: toISO(y, mName, d2), year: y });
+      // SAME-MONTH ranges
+      for (let m; (m = RX_RANGE_SAME.exec(body)); ) {
+        const monthName = m[1];
+        const d2 = m[2] && m[3] ? m[3] : m[2]; // defensive, but m[3] should exist per regex
+        const idx = m.index ?? 0;
+        const slice = body.slice(Math.max(0, idx - 60), idx + 120);
+        // Ignore rows that are clearly minutes/updates
+        if (/minutes|released|last\s+update/i.test(slice)) continue;
+        // If the month name is followed by a period "January." it still matches due to GAP
+        candidates.push({ iso: toISO(y, monthName, d2), year: y });
       }
 
-      // Cross-month ranges → keep the later (second) month/day, same year
-      for (let m; (m = RX_RANGE_XMON.exec(sec.body)); ) {
-        const mName2 = m[4], d2 = m[5];
-        const slice = sec.body.slice(Math.max(0, m.index - 40), m.index + 80);
-        if (/minutes|released/i.test(slice)) continue;
-        candidates.push({ iso: toISO(y, mName2, d2), year: y });
+      // CROSS-MONTH ranges (rare; keep the second month/day)
+      for (let m; (m = RX_RANGE_XMON.exec(body)); ) {
+        const monthName2 = m[4];
+        const d2 = m[5];
+        const idx = m.index ?? 0;
+        const slice = body.slice(Math.max(0, idx - 60), idx + 140);
+        if (/minutes|released|last\s+update/i.test(slice)) continue;
+        candidates.push({ iso: toISO(y, monthName2, d2), year: y });
       }
     }
 
     if (!candidates.length) throw new Error("no meeting ranges found in sections");
 
-    // De-dup, sort
+    // de-dup + sort
     const seen = new Set();
     const uniq = candidates.filter(c => {
       if (seen.has(c.iso)) return false;
@@ -85,14 +96,14 @@ exports.handler = async () => {
       return true;
     }).sort((a, b) => a.iso.localeCompare(b.iso));
 
-    // ---- Pick the first date >= today (local midnight)
+    // pick first date >= today (local midnight)
     const todayLocal = new Date(curY, today.getMonth(), today.getDate()).getTime();
     let chosen = uniq.find(c => new Date(c.iso + "T00:00:00").getTime() >= todayLocal)?.iso;
-    if (!chosen) chosen = uniq[uniq.length - 1].iso; // fallback to most recent in the pool
+    if (!chosen) chosen = uniq[uniq.length - 1].iso;
 
-    // ---- Build events on the decision day
+    // build decision-day drops
     const monthNum = parseInt(chosen.slice(5, 7), 10); // 1..12
-    const sepMonths = new Set([3, 6, 9, 12]); // Mar, Jun, Sep, Dec → SEP "Economic Projections"
+    const sepMonths = new Set([3, 6, 9, 12]); // Mar/Jun/Sep/Dec → projections
     const events = [
       { title: "FOMC Statement",                    date: chosen, time: "14:00" },
       { title: "Federal Funds Rate (Target Range)", date: chosen, time: "14:00" },
