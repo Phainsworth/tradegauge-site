@@ -1404,48 +1404,7 @@ async function analyzeWithAI(opts: AnalyzeOpts = {}) {
 setIsGenLoading(true);
 setLlmStatus("Analyzing…");
 
-// ---------- Netlify OpenAI proxy helper ----------
-const OPENAI_FN = "/.netlify/functions/openai-analyze";
-async function callOpenAIProxy(body: any) {
-  const r = await fetch(OPENAI_FN, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      ...body,
-      context: {
-        ...(body?.context || {}),
-        hints: [
-          ...(body?.context?.hints || []),
-          ...(profitHint ? [profitHint] : []),
-        ],
-      },
-    }),
-  });
-  if (!r.ok) {
-    const t = await r.text().catch(() => "");
-    throw new Error(`OpenAI proxy ${r.status} ${t}`.trim());
-  }
-  return await r.json();
-}
-
-// ---------- base rule score (fallback) ----------
-const ruleOnly = computeRuleRiskScore({
-  dte: daysToExpiry,
-  ivPct,
-  distance_otm_pct: d.distance_otm_pct,
-  oi: greeksNumbers.openInterest,
-  breakeven_gap_pct: d.breakeven_gap_pct,
-  earningsSoonTxt,
-  macroSoon,
-});
-
-const clampScore = (n: any) =>
-  Number.isFinite(n) ? Math.max(0, Math.min(10, Number(n))) : ruleOnly;
-
-// ---------- combine AI score + nudges ----------
-const baseScore = clampScore(parsedJSON?.score);
-
-// ---- PnL cushion nudge ----
+/* ---------- Compute PnL + profitHint *before* calling OpenAI ---------- */
 const paidVal = (() => {
   const refMark =
     opts?.quoteOverride && Number.isFinite(opts.quoteOverride.mark as any)
@@ -1469,13 +1428,100 @@ const pnlPct = Number.isFinite(paidVal) && Number.isFinite(markNow)
   ? ((markNow - paidVal) / paidVal) * 100
   : null;
 
-// --- Profit-protection hint when up big (AFTER pnlPct exists) ---
 let profitHint: string | null = null;
 if (pnlPct != null && pnlPct >= 50) {
   profitHint =
     "User is up ≥50% on this contract. Emphasize paying yourself and not letting it round-trip to red. Suggest partial take-profit (e.g., 1/3–1/2), trail stop above breakeven (breakeven + slippage), and a time stop (e.g., 1 week before expiry or ahead of high-impact macro). Avoid adding risk.";
 }
 
+/* ---------- Netlify OpenAI proxy helper ---------- */
+const OPENAI_FN = "/.netlify/functions/openai-analyze";
+async function callOpenAIProxy(body: any) {
+  const r = await fetch(OPENAI_FN, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...body,
+      context: {
+        ...(body?.context || {}),
+        hints: [
+          ...(body?.context?.hints || []),
+          ...(profitHint ? [profitHint] : []),
+        ],
+      },
+    }),
+  });
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    throw new Error(`OpenAI proxy ${r.status} ${t}`.trim());
+  }
+  return await r.json();
+}
+
+/* ---------- Call OpenAI (strict JSON first, then fallback) ---------- */
+async function callOpenAI(useStrictJson: boolean) {
+  return await callOpenAIProxy({
+    model: "gpt-4o-mini",
+    temperature: 0.4,
+    max_tokens: 900,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    ...(useStrictJson ? { response_format: { type: "json_object" } } : {}),
+  });
+}
+
+let resp;
+try {
+  resp = await callOpenAI(true);
+} catch (err: any) {
+  addDebug("OpenAI strict JSON failed, retrying", err);
+  resp = await callOpenAI(false);
+}
+
+/* ---------- Parse JSON safely ---------- */
+const rawTxt = resp?.choices?.[0]?.message?.content ?? "";
+if (!rawTxt) addDebug("[AI] empty content", resp);
+
+let parsedJSON: any = {};
+try {
+  parsedJSON = JSON.parse(rawTxt.trim());
+} catch (err) {
+  addDebug("AI JSON parse error, attempting brace-slice", err);
+  const match = String(rawTxt).match(/\{[\s\S]*\}/);
+  if (match) {
+    try {
+      parsedJSON = JSON.parse(match[0]);
+    } catch (err2) {
+      addDebug("AI JSON parse failed again", err2);
+      parsedJSON = {};
+    }
+  } else {
+    parsedJSON = {};
+  }
+}
+
+const safeNarr = sanitizeNarrative(parsedJSON?.narrative);
+
+/* ---------- base rule score (fallback) ---------- */
+const ruleOnly = computeRuleRiskScore({
+  dte: daysToExpiry,
+  ivPct,
+  distance_otm_pct: d.distance_otm_pct,
+  oi: greeksNumbers.openInterest,
+  breakeven_gap_pct: d.breakeven_gap_pct,
+  earningsSoonTxt,
+  macroSoon,
+});
+
+const clampScore = (n: any) =>
+  Number.isFinite(n) ? Math.max(0, Math.min(10, Number(n))) : ruleOnly;
+
+/* ---------- combine AI score + nudges ---------- */
+const baseScore = clampScore(parsedJSON?.score);
+
+/* ---------- Cushion nudges (uses pnlPct already computed) ---------- */
 const dteForNudge = Number.isFinite((daysToExpiry as any)) ? (daysToExpiry as number) : 999;
 
 let cushionN = 0;
@@ -1487,12 +1533,12 @@ if (pnlPct !== null) {
   else if (pnlPct >= 40) cushionN -= 0.7;
   else if (pnlPct >= 20) cushionN -= 0.4;
 
-  if (dteForNudge <= 10 && pnlPct < 0) cushionN += 0.3;
-  if (dteForNudge <= 5  && pnlPct > 0) cushionN += 0.1;
+  if (dteForNudge <= 10 && pnlPct < 0) cushionN += 0.3; // short DTE & red = riskier
+  if (dteForNudge <= 5  && pnlPct > 0) cushionN += 0.1; // very short & green = tiny bump
 }
-console.log("[CUSHION] paid, mark, pnl%, dte, cushionN:", paidVal, markNow, pnlPct, dteForNudge);
+console.log("[CUSHION] paid, mark, pnl%, dte, cushionN:", paidVal, markNow, pnlPct, dteForNudge, cushionN);
 
-// ---- FINAL SCORE ----
+/* ---- FINAL SCORE ---- */
 const CALIBRATION = { scale: 0.85, bias: -1.2 };
 const recenter = (s: number) => (s * CALIBRATION.scale) + CALIBRATION.bias;
 const finalScore = Math.max(0, Math.min(10, recenter(baseScore) + nudge + cushionN));
