@@ -2355,26 +2355,43 @@ async function fetchEarnings(symbol: string) {
 // Always-on macro feed (independent of ticker)
 async function fetchUpcomingMacro() {
   try {
-    const r = await fetch("/.netlify/functions/fred-calendar?days=180", { cache: "no-store" });
-    const j: any = await r.json();
-    const arr: any[] = Array.isArray(j?.events) ? j.events : [];
+    // Fetch FRED (CPI/PPI/Retail) + Fed (FOMC) in parallel
+    const [fredRes, fedRes] = await Promise.all([
+      fetch("/.netlify/functions/fred-calendar?days=180", { cache: "no-store" }),
+      fetch("/.netlify/functions/fomc-schedule", { cache: "no-store" }),
+    ]);
 
-    const events: EconEvent[] = arr
+    const fredJ: any = await fredRes.json();
+    const fedJ:  any = await fedRes.json();
+
+    const fredArr: any[] = Array.isArray(fredJ?.events) ? fredJ.events : [];
+    const fedArr:  any[] = Array.isArray(fedJ?.events)  ? fedJ.events  : [];
+
+    // Map FRED → keep only CPI / PPI / Retail Sales
+    const fredEvents: EconEvent[] = fredArr
       .map((ev: any) => {
         const at = typeof ev?.at === "string" ? ev.at : "";
         const date = at.slice(0, 10); // YYYY-MM-DD
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null as any;
         const title = String(ev?.title ?? "Macro");
         const time  = ev?.time ? String(ev.time) : "";
+        const k = title.toLowerCase();
+        const keep = k.includes("cpi") || k.includes("ppi") || k.includes("retail sales");
+        if (!keep) return null as any;
         return { title, date, time };
       })
       .filter(Boolean) as EconEvent[];
 
-    // Sort ascending
-events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+    // Fed (FOMC) events are already normalized {title, date, time} and pre-windowed to 14 days
+    const fedEvents: EconEvent[] = fedArr
+      .map((e: any) =>
+        e && e.date && e.title ? { title: String(e.title), date: String(e.date), time: String(e.time || "") } : null
+      )
+      .filter(Boolean) as EconEvent[];
 
-// Sort ascending
-events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+    // Merge + sort asc (date+time)
+    const events: EconEvent[] = [...fredEvents, ...fedEvents];
+    events.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
 
 // De-noise spammy releases:
 // - FOMC: keep decision Wednesdays even if Tuesday isn't in the feed
