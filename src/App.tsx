@@ -3177,6 +3177,7 @@ function renderTLDR() {
             <Select
               label="Option Type"
               name="type"
+               disabled={submitted}
               value={form.type}
               onChange={onChange}
               options={["", "CALL", "PUT"]}
@@ -3186,6 +3187,7 @@ function renderTLDR() {
               label={`Strike${loadingStrikes ? " (loading…)" : ""}`}
               name="strike"
               value={form.strike}
+               disabled={submitted}
               onChange={onChange}
               options={strikes.length ? ["", ...strikes.map((n) => String(n))] : [""]}
               className="solid-input"
@@ -3194,6 +3196,7 @@ function renderTLDR() {
               label={`Expiration${loadingExp ? " (loading…)" : ""}`}
               name="expiry"
               value={form.expiry}
+               disabled={submitted}
               onChange={onChange}
               options={expirations.length ? ["", ...expirations] : [""]}
               className="solid-input"
@@ -3204,6 +3207,7 @@ function renderTLDR() {
               name="pricePaid"
               type="number"
               value={form.pricePaid}
+               disabled={submitted}
               onChange={onChange}
               placeholder="1.00, 2.10 etc"
               min="0"
