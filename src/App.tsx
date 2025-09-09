@@ -1900,7 +1900,76 @@ function filterStrikesForView(args: {
     if (Array.isArray(node?.[lc])) return node[lc];
     return [];
   }
+// Load strikes ONLY for the chosen expiry (no cross-expiry bleed)
+async function loadStrikesForExpiry(tkr: string, type: "CALL" | "PUT", expiryYMD: string) {
+  // Guard
+  if (!tkr || !type || !expiryYMD) {
+    setAllStrikes([]);
+    setStrikes([]);
+    return;
+  }
 
+  setLoadingStrikes(true);
+  try {
+    // 1) Pull full chain once (cached) and isolate the single expiry node
+    const data = await fetchOptionChain(tkr);
+    const target = (data || []).find(
+      (node: any) => normalizeExpiry(getExpirationRaw(node)) === expiryYMD
+    );
+
+    const legs = target ? extractLegsForType(target, type) : [];
+
+    // 2) Map to real strike prices for that expiry only (keep decimals like 172.5)
+    const list: number[] = Array.from(
+      new Set(
+        legs
+          .map((o: any) => Number(o?.strike ?? o?.strikePrice))
+          .filter((n) => Number.isFinite(n) && n > 0)
+      )
+    ).sort((a, b) => a - b);
+
+    // Save the full per-expiry list (used for view windowing / showAllStrikes)
+    setAllStrikes(list);
+
+    // 3) Build the visible window (≈ STRIKES_EACH_SIDE around spot/current)
+    const spotNum =
+      form.spot !== "" && Number.isFinite(Number(form.spot)) && Number(form.spot) > 0
+        ? Number(form.spot)
+        : null;
+
+    const curr =
+      Number.isFinite(Number(form.strike)) && Number(form.strike) > 0
+        ? Number(form.strike)
+        : null;
+
+    let view = showAllStrikes
+      ? [...list]
+      : filterStrikesForView({
+          spot: spotNum,
+          all: list,
+          current: curr,               // keep the current selection visible if still valid
+          eachSide: STRIKES_EACH_SIDE, // same windowing you already use
+        });
+
+    // Safety: never render empty; fall back to full list
+    if (!Array.isArray(view) || view.length === 0) view = [...list];
+    if (curr != null && !view.includes(curr)) view.push(curr);
+    view.sort((a, b) => a - b);
+    setStrikes(view);
+
+    // 4) If the old strike isn’t listed on this expiry, clear it (auto-select will repopulate)
+    if (!list.includes(Number(form.strike))) {
+      strikeTouchedRef.current = false; // allow auto-select to kick in
+      setForm((f) => ({ ...f, strike: "" }));
+    }
+  } catch (e) {
+    console.warn("[strikes] loadStrikesForExpiry error:", e);
+    setAllStrikes([]);
+    setStrikes([]);
+  } finally {
+    setLoadingStrikes(false);
+  }
+}
 
 async function loadStrikesAllExpiries(tkr: string, type?: "CALL" | "PUT") {
   // Guard: missing type/ticker -> clear both and bail
