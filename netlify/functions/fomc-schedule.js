@@ -62,7 +62,7 @@ exports.handler = async () => {
 
     // Find each "FOMC Meeting" occurrence and look backward for the date label like "Sep. 16-17"
     const meetings = [];
-    for (const m of scope.matchAll(/FOMC\s+Meeting/i)) {
+    for (const m of scope.matchAll(/FOMC\s+Meeting/gi)) {
       const i = m.index ?? 0;
       // Look back ~120 chars to catch the leading date text
       const win = scope.slice(Math.max(0, i - 160), i);
