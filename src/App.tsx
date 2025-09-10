@@ -1290,7 +1290,6 @@ function makeFallbackPlan(args: {
 // If your function name/path differs, update OPENAI_FN below.
 
 async function analyzeWithAI(opts: AnalyzeOpts = {}) {
-  console.log("analyzeWithAI start");
   try {
     // Basic guards
     if (!form?.ticker || !form?.type || !form?.strike || !form?.expiry) return;
@@ -1539,7 +1538,6 @@ if (pnlPct !== null) {
   if (dteForNudge <= 10 && pnlPct < 0) cushionN += 0.3; // short DTE & red = riskier
   if (dteForNudge <= 5  && pnlPct > 0) cushionN += 0.1; // very short & green = tiny bump
 }
-console.log("[CUSHION] paid, mark, pnl%, dte, cushionN:", paidVal, markNow, pnlPct, dteForNudge, cushionN);
 
 /* ---- FINAL SCORE ---- */
 const CALIBRATION = { scale: 0.85, bias: -1.2 };
@@ -1636,7 +1634,7 @@ try {
   });
 
   const planText = planResp?.choices?.[0]?.message?.content?.trim() || "{}";
-  console.log("[PLAN raw]", planText);
+  
   const planOut = parsePlanJSON(planText);
 
   if (planOut) {
@@ -1886,10 +1884,10 @@ async function fetchPaged(suffix: string, maxPages = 6, minUniqueExp = 40) {
   for (let page = 0; page < maxPages; page++) {
     const path = `${basePath}${suffix}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
     const url  = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(path)}`;
-    console.log("[POLY expiries] URL:", url);
+    
 
     const r = await fetch(url);
-    console.log("[POLY expiries] status:", r.status);
+    
     if (!r.ok) break;
 
     const j = await r.json();
@@ -1908,8 +1906,6 @@ async function fetchPaged(suffix: string, maxPages = 6, minUniqueExp = 40) {
 
     if (uniqExp.size >= minUniqueExp) break;
   }
-
-  console.log("[POLY expiries] paged total:", arr.length, "unique expirations:", Array.from(new Set(arr.map(c => String(c?.expiration_date || c?.expirationDate || "").slice(0,10)))).length);
   return arr;
 }
 
@@ -2257,8 +2253,7 @@ if (POLY_KEY) {
 
     const pr = await fetch(polyUrl, { headers: { Accept: "application/json" } });
     const pj = await pr.json();
-    console.log("[POLY CONTRACT RAW]", pj);
-
+   
     const res = pj?.results; // single object (not array)
     if (res) {
       const gg = res?.greeks ?? {};
@@ -2273,7 +2268,7 @@ if (POLY_KEY) {
         openInterest: toNum(res?.open_interest),
       };
 
-      console.log("[POLY CONTRACT PARSED]", polyGreeks);
+     
     } else {
       console.warn("[POLY CONTRACT] results empty for", { ticker, contract });
     }
@@ -2331,7 +2326,7 @@ const quoteNum = {
   mark: isNum(markNum) ? markNum : null,
 };
 
-console.log("[CUSHION] merged quote+greeks:", { quoteNum, numericGreeks, contract });
+
 
 return { numericGreeks, contract, quoteNum };
   } catch (e: any) {
@@ -2779,8 +2774,6 @@ useEffect(() => {
 useEffect(() => {
   if (!form.ticker || !form.ticker.trim()) return;
 
-  console.log("[WATCH ticker→expirations]", { t: form.ticker });
-
   // Hard reset cross-ticker state so nothing bleeds
   setForm((f) => ({ ...f, expiry: "", strike: "" }));
   setExpirations([]);
@@ -2927,9 +2920,6 @@ useEffect(() => {
 
 
       const snap = await loadPolygonGreeks(form.ticker, form.expiry, typeLower, form.strike);
-      console.log("[CUSHION] snap.quoteNum:", snap?.quoteNum); // <— add this one line
-      // TEMP: log and wire greeks from the loader
-console.log("[GREEKS RAW]", snap?.numericGreeks);
 
 const g = snap?.numericGreeks;
 setGreeks({
@@ -2951,7 +2941,7 @@ setGreeks({
     src: "Tradier",
   });
 }
-console.log("[QUOTE UI STATE]", snap?.quoteNum, "→", { bid: snap?.quoteNum?.bid?.toFixed?.(2), ask: snap?.quoteNum?.ask?.toFixed?.(2), last: snap?.quoteNum?.last?.toFixed?.(2), mark: snap?.quoteNum?.mark?.toFixed?.(2) });
+
 
       await Promise.all([fetchNewsAndEvents(form.ticker), fetchEarnings(form.ticker)]);
 
