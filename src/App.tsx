@@ -1844,7 +1844,6 @@ if (!arr.length) {
     // 1) Fast, current-only slices by contract_type
     let calls = await fetchSlice(`&active=true&contract_type=call`);
     let puts  = await fetchSlice(`&active=true&contract_type=put`);
-    let arr   = [...calls, ...puts];
 
     // 2) Fallback if empty: drop active=true (catalog can be bigger, but we still split)
     if (!arr.length) {
