@@ -5028,7 +5028,7 @@ background: linear-gradient(90deg,
   alt=""
   aria-hidden="true"
   className="
-    absolute left-0 top-1/2 -translate-y-1/2
+    absolute left-5 top-1/2 -translate-y-1/2
     h-[85vh] w-auto
     opacity-15
     mix-blend-soft-light
