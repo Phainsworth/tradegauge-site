@@ -1972,9 +1972,8 @@ async function loadExpirations(tkr: string): Promise<string[]> {
     return null;
   };
 
-  // format Date -> YYYY-MM-DD
-  const toYMD = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString().slice(0, 10);
-
+  const toYMD = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString().slice(0, 10);
   // ------------------------------------
 
   try {
@@ -1998,9 +1997,9 @@ async function loadExpirations(tkr: string): Promise<string[]> {
     let cursor: string | null = null;
     let page = 0;
 
-    // lighter target: ~30% fewer than 50 → 35
-    const MAX_PAGES = 24;       // still generous for tickers like SPY
-    const MIN_UNIQUE_EXPS = 35; // early-stop once we have ~35 future expirations
+    // ~25% fewer than 35 → 26 unique expirations
+    const MAX_PAGES = 24;        // generous cap for tickers like SPY
+    const MIN_UNIQUE_EXPS = 26;  // early-stop target (~25% fewer)
 
     while (page < MAX_PAGES) {
       const path = cursor ? `${basePath}&cursor=${encodeURIComponent(cursor)}` : basePath;
@@ -2008,7 +2007,7 @@ async function loadExpirations(tkr: string): Promise<string[]> {
       const contracts = extractContracts(j);
       if (!Array.isArray(contracts) || contracts.length === 0) break;
 
-      // collect expirations from this page (future-only, capped at 24 months)
+      // collect expirations from this page (future-only, within 24 months)
       for (const c of contracts) {
         const raw =
           c?.expiration_date ??
