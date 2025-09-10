@@ -1804,9 +1804,7 @@ async function loadExpirations(tkr: string) {
 const basePath =
   `/v3/reference/options/contracts` +
   `?underlying_ticker=${encodeURIComponent(TKR)}` +
-  `&expiration_date=${encodeURIComponent(ymd)}` +
-  `&contract_type=${encodeURIComponent(type.toLowerCase())}` +
-  `&limit=1000`;
+  `&limit=500`;
 
 // 1) First attempt — current contracts only
 let path = `${basePath}&active=true`;
