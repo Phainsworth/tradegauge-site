@@ -3632,7 +3632,7 @@ function renderTLDR() {
 {submitted && !isGenLoading && (
 <div className="flex justify-center mb-6">
   <button
-    onClick={() => resetAll()}
+    onClick={() => resetAll({ hard: true })}
     className="inline-flex items-center gap-2 rounded-xl border border-purple-500 bg-neutral-900/70 backdrop-blur px-4 py-2 text-sm text-purple-300 hover:bg-purple-500/10 hover:shadow-[0_0_10px_rgba(168,85,247,0.6)] active:scale-[0.99] transition"
     title="Clear and start a fresh check"
     aria-label="Try another contract"
