@@ -5022,14 +5022,14 @@ background: linear-gradient(90deg,
       </div>
 {/* LAYER 1.5: faint side portraits */}
       <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 15 }}>
-       {/* Musk — left (~30% width) */}
+{/* Musk — left (height-based) */}
 <img
-  src="/powell.png"
+  src="/musk.png"
   alt=""
   aria-hidden="true"
   className="
     absolute left-[-2vw] top-1/2 -translate-y-1/2
-    w-[30vw] max-w-none h-auto
+    h-[85vh] w-auto              /* height controls size; width auto */
     opacity-15
     mix-blend-soft-light
     pointer-events-none select-none
@@ -5037,14 +5037,14 @@ background: linear-gradient(90deg,
   style={{ filter: "blur(0.3px)" }}
 />
 
-{/* Trump — right (~30% width) */}
+{/* Trump — right (height-based) */}
 <img
   src="/trump.png"
   alt=""
   aria-hidden="true"
   className="
     absolute right-[-2vw] top-1/2 -translate-y-1/2
-    w-[30vw] max-w-none h-auto
+    h-[85vh] w-auto              /* height controls size; width auto */
     opacity-15
     mix-blend-soft-light
     pointer-events-none select-none
