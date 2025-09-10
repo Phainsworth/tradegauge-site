@@ -5028,7 +5028,7 @@ background: linear-gradient(90deg,
   alt=""
   aria-hidden="true"
 className="
-  absolute left-[-8vw] top-1/2 -translate-y-1/2
+  absolute left-[-30vw] top-1/2 -translate-y-1/2
   h-[85vh] w-auto
   opacity-15
   mix-blend-soft-light
@@ -5037,13 +5037,13 @@ className="
   style={{ filter: "blur(0.3px)" }}
 />
 
-{/* Trump — right (flush) */}
+{/* Trump — right (bleed) */}
 <img
   src="/trump.png"
   alt=""
   aria-hidden="true"
   className="
-    absolute right-0 top-1/2 -translate-y-1/2
+    absolute right-[-30vw] top-1/2 -translate-y-1/2
     h-[85vh] w-auto
     opacity-15
     mix-blend-soft-light
