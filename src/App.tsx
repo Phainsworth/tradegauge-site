@@ -58,8 +58,35 @@ const [plan, setPlan] = useState<PlanOut | null>(null);
    const [allStrikes, setAllStrikes] = useState<number[]>([]);
 const [showAllStrikes, setShowAllStrikes] = useState(false);
   const strikeTouchedRef = useRef(false);
+   const inflightStrikesKeyRef = useRef<string>("");
+const lastStrikesKeyRef = useRef<string>("");
   const [loadingExp, setLoadingExp] = useState(false);
   const [loadingStrikes, setLoadingStrikes] = useState(false);
+
+function makeStrikesKey(tkr: string, type: "CALL" | "PUT", ymd: string) {
+  return `${String(tkr).trim().toUpperCase()}|${type}|${ymd}`;
+}
+
+async function requestStrikes(tkr: string, type: "CALL" | "PUT", ymd: string) {
+  const key = makeStrikesKey(tkr, type, ymd);
+
+  // If we already did or are doing this exact request, skip.
+  if (inflightStrikesKeyRef.current === key || lastStrikesKeyRef.current === key) {
+    console.log("[STRIKES] dedupe skip:", key);
+    return;
+  }
+
+  inflightStrikesKeyRef.current = key;
+  try {
+    await loadStrikesForExpiry(tkr, type, ymd);
+    lastStrikesKeyRef.current = key;
+  } catch (e) {
+    console.warn("[STRIKES] request error", e);
+  } finally {
+    if (inflightStrikesKeyRef.current === key) inflightStrikesKeyRef.current = "";
+  }
+}
+
 // Strike filtering (view)
 // Show exactly 15 strikes below and 15 above the closest-to-spot strike (≈31 total)
 const STRIKES_EACH_SIDE = 30;
@@ -2808,7 +2835,11 @@ useEffect(() => {
       if (ymd !== form.expiry) {
         setForm((f) => ({ ...f, expiry: ymd })); // keep UI in sync
       }
-      await loadStrikesForExpiry(form.ticker, form.type as "CALL" | "PUT", ymd);
+      await requestStrikes(
+  form.ticker,
+  form.type as "CALL" | "PUT",
+  ymd // ← use the fast-found nearest expiry, not form.expiry
+);
     }
 
     // Await the full expirations list (UI dropdown)
@@ -2829,11 +2860,11 @@ useEffect(() => {
     exp: form.expiry
   });
 
-  loadStrikesForExpiry(
-    form.ticker,
-    form.type as "CALL" | "PUT",
-    form.expiry
-  ).catch((e) => addDebug("Strikes effect error", e));
+requestStrikes(
+  form.ticker,
+  form.type as "CALL" | "PUT",
+  form.expiry
+).catch?.((e: any) => addDebug("Strikes effect error", e));
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [form.ticker, form.type, form.expiry]);
