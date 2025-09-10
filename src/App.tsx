@@ -5022,35 +5022,35 @@ background: linear-gradient(90deg,
       </div>
 {/* LAYER 1.5: faint side portraits */}
       <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 15 }}>
-        {/* Musk — left */}
-        <img
-          src="/musk.png"
-          alt=""
-          aria-hidden="true"
-          className="
-            absolute left-0 top-1/3
-            w-[34vw] max-w-[500px] h-auto
-            opacity-10
-            mix-blend-soft-light
-            select-none
-          "
-          style={{ filter: "blur(0.3px)" }}
-        />
+       {/* Musk — left (~30% width) */}
+<img
+  src="/musk.png"
+  alt=""
+  aria-hidden="true"
+  className="
+    absolute left-[-2vw] top-1/2 -translate-y-1/2
+    w-[30vw] max-w-none h-auto
+    opacity-15
+    mix-blend-soft-light
+    pointer-events-none select-none
+  "
+  style={{ filter: "blur(0.3px)" }}
+/>
 
-        {/* Trump — right */}
-        <img
-          src="/trump.png"
-          alt=""
-          aria-hidden="true"
-          className="
-            absolute right-0 top-1/4
-            w-[36vw] max-w-[540px] h-auto
-            opacity-10
-            mix-blend-soft-light
-            select-none
-          "
-          style={{ filter: "blur(0.3px)" }}
-        />
+{/* Trump — right (~30% width) */}
+<img
+  src="/trump.png"
+  alt=""
+  aria-hidden="true"
+  className="
+    absolute right-[-2vw] top-1/2 -translate-y-1/2
+    w-[30vw] max-w-none h-auto
+    opacity-15
+    mix-blend-soft-light
+    pointer-events-none select-none
+  "
+  style={{ filter: "blur(0.3px)" }}
+/>
       </div>
       {/* LAYER 2: stars (absolute; above sun for a nice light-over effect if desired) */}
       <div className="parallax-stars absolute inset-0 z-20">
