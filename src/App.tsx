@@ -1859,7 +1859,7 @@ function pickNearestExpiry(dates: string[]): string {
 }
 // Expirations for an underlying (Polygon; chunked + fallback, no helpers)
 async function loadExpirations(tkr: string): Promise<string[]> {
-  const TKR = String(tkr || "").trim().toUpperCase();
+  const TKR = String(tkr ?? "").trim().toUpperCase();
   if (!TKR) {
     setExpirations([]);
     return [];
@@ -1868,16 +1868,41 @@ async function loadExpirations(tkr: string): Promise<string[]> {
   setLoadingExp(true);
   const seen = new Set<string>(); // collect distinct YYYY-MM-DD dates here
 
+  // ---- helpers (scoped here so they can't go missing) ----
+  function extractContracts(j: any): any[] {
+    if (!j) return [];
+    if (Array.isArray(j.results)) return j.results;
+    if (Array.isArray(j.data)) return j.data;
+    if (j.body) {
+      if (Array.isArray(j.body.results)) return j.body.results;
+      if (Array.isArray(j.body.data)) return j.body.data;
+    }
+    return [];
+  }
+
+  // Try to pull the "cursor" token out of any next_* field Polygon returns
+  function nextCursorFrom(j: any): string | null {
+    const candidates = [j?.next_cursor, j?.cursor, j?.next, j?.next_url];
+    for (const v of candidates) {
+      if (!v) continue;
+      if (typeof v === "string") {
+        // If it’s a full URL or a path, parse ?cursor=
+        const m = v.match(/[?&]cursor=([^&]+)/);
+        if (m) return decodeURIComponent(m[1]);
+        // Sometimes it’s already just the token:
+        if (!v.includes("http") && !v.includes("?")) return v;
+      }
+    }
+    return null;
+  }
+  // -------------------------------------------------------
+
   try {
     // smaller page; we’ll paginate
     const basePath =
       `/v3/reference/options/contracts` +
       `?underlying_ticker=${encodeURIComponent(TKR)}` +
       `&limit=500`;
-
-    const today = new Date().toISOString().slice(0, 10);
-
-    // NOTE: using your existing helpers extractContracts(...) and nextCursorFrom(...)
 
     // paginate up to a safe cap
     let cursor: string | null = null;
@@ -1897,9 +1922,9 @@ async function loadExpirations(tkr: string): Promise<string[]> {
       // collect expirations from this page
       for (const c of contracts) {
         const raw =
-          c?.expiration_date ||
-          c?.expirationDate ||
-          c?.exp_date ||
+          c?.expiration_date ??
+          c?.expirationDate ??
+          c?.exp_date ??
           "";
         if (!raw) continue;
 
@@ -1919,14 +1944,13 @@ async function loadExpirations(tkr: string): Promise<string[]> {
       }
 
       // incremental update so the dropdown starts filling fast
-      const partial = Array.from(seen).sort();
-      setExpirations(partial);
+      setExpirations(Array.from(seen).sort());
 
       // advance cursor (stop if none)
       const next = nextCursorFrom(j);
       if (!next) break;
       cursor = next;
-      page++;
+      page += 1;
 
       // yield to the UI between pages
       await Promise.resolve();
