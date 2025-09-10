@@ -1800,50 +1800,16 @@ async function loadExpirations(tkr: string) {
 
   setLoadingExp(true);
   try {
-    // smaller page + split by contract_type reduces payload (SPY-safe)
-    const basePath =
-      `/v3/reference/options/contracts` +
-      `?underlying_ticker=${encodeURIComponent(TKR)}` +
-      `&limit=500`;
+// smaller page; we’ll paginate
+const basePath =
+  `/v3/reference/options/contracts` +
+  `?underlying_ticker=${encodeURIComponent(TKR)}` +
+  `&limit=500`;
 
-    // 1) First attempt — active=true (current contracts), calls + puts
-    let urlCall = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(
-      `${basePath}&active=true&contract_type=call`
-    )}`;
-    let urlPut  = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(
-      `${basePath}&active=true&contract_type=put`
-    )}`;
+const today = new Date().toISOString().slice(0, 10);
 
-    console.log("[POLY expiries] URL call:", urlCall);
-    console.log("[POLY expiries] URL put :", urlPut);
-
-    let rCall = await fetch(urlCall);
-    let rPut  = await fetch(urlPut);
-
-    console.log("[POLY expiries] status call:", rCall.status);
-    console.log("[POLY expiries] status put :", rPut.status);
-
-    let jCall: any = rCall.ok ? await rCall.json() : null;
-    let jPut : any = rPut.ok  ? await rPut.json()  : null;
-console.log("[POLY expiries] shapes:", {
-  callKeys: jCall ? Object.keys(jCall) : null,
-  putKeys:  jPut  ? Object.keys(jPut)  : null,
-  callLens: {
-    results: jCall?.results?.length,
-    data:    jCall?.data?.length,
-    bodyRes: jCall?.body?.results?.length,
-    bodyDat: jCall?.body?.data?.length,
-  },
-  putLens: {
-    results: jPut?.results?.length,
-    data:    jPut?.data?.length,
-    bodyRes: jPut?.body?.results?.length,
-    bodyDat: jPut?.body?.data?.length,
-  }
-});
-   function extractContracts(j: any): any[] {
+function extractContracts(j: any): any[] {
   if (!j) return [];
-  // handle common proxy wrappers
   if (Array.isArray(j.results)) return j.results;
   if (Array.isArray(j.data))    return j.data;
   if (j.body) {
@@ -1853,39 +1819,70 @@ console.log("[POLY expiries] shapes:", {
   return [];
 }
 
-let arr: any[] = [
-  ...extractContracts(jCall),
-  ...extractContracts(jPut),
-];
-     console.log("[POLY expiries] combined count:", arr.length);
-    // 2) Fallback — if empty, retry without active=true (catalog query)
-    if (!arr.length) {
-      console.warn("[POLY expiries] empty with active=true — retrying without it");
-
-      urlCall = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(
-        `${basePath}&contract_type=call`
-      )}`;
-      urlPut  = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(
-        `${basePath}&contract_type=put`
-      )}`;
-
-      console.log("[POLY expiries] URL call (retry):", urlCall);
-      console.log("[POLY expiries] URL put  (retry):", urlPut);
-
-      rCall = await fetch(urlCall);
-      rPut  = await fetch(urlPut);
-
-      console.log("[POLY expiries] status call (retry):", rCall.status);
-      console.log("[POLY expiries] status put  (retry):", rPut.status);
-
-      jCall = rCall.ok ? await rCall.json() : null;
-      jPut  = rPut.ok  ? await rPut.json()  : null;
-
-      arr = [
-        ...(((jCall?.results ?? jCall?.data) as any[]) || []),
-        ...(((jPut ?.results ?? jPut ?.data) as any[]) || []),
-      ];
+// Try to pull the "cursor" token out of any next_* field Polygon returns
+function nextCursorFrom(j: any): string | null {
+  const candidates = [j?.next_cursor, j?.cursor, j?.next, j?.next_url];
+  for (const v of candidates) {
+    if (!v) continue;
+    if (typeof v === "string") {
+      // If it’s a full URL or a path, parse ?cursor=
+      const m = v.match(/[?&]cursor=([^&]+)/);
+      if (m) return decodeURIComponent(m[1]);
+      // Sometimes it’s already just the token:
+      if (!v.includes("http") && !v.includes("?")) return v;
     }
+  }
+  return null;
+}
+
+// Paginated fetch: gather up to ~40 distinct future expirations (max 6 pages)
+async function fetchPaged(suffix: string, maxPages = 6, minUniqueExp = 40) {
+  let arr: any[] = [];
+  let uniqExp = new Set<string>();
+  let cursor: string | null = null;
+
+  for (let page = 0; page < maxPages; page++) {
+    const path = `${basePath}${suffix}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const url  = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(path)}`;
+    console.log("[POLY expiries] URL:", url);
+
+    const r = await fetch(url);
+    console.log("[POLY expiries] status:", r.status);
+    if (!r.ok) break;
+
+    const j = await r.json();
+    const chunk = extractContracts(j);
+    arr.push(...chunk);
+
+    // Track unique future expirations as we go (so we can early-stop)
+    for (const c of chunk) {
+      const d = String(c?.expiration_date || c?.expirationDate || "").slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d >= today) uniqExp.add(d);
+    }
+
+    const next = nextCursorFrom(j);
+    if (!next) break;
+    cursor = next;
+
+    if (uniqExp.size >= minUniqueExp) break;
+  }
+
+  console.log("[POLY expiries] paged total:", arr.length, "unique expirations:", Array.from(new Set(arr.map(c => String(c?.expiration_date || c?.expirationDate || "").slice(0,10)))).length);
+  return arr;
+}
+
+// 1) First attempt — current contracts only (active=true), split by contract_type
+let calls = await fetchPaged(`&active=true&contract_type=call`);
+let puts  = await fetchPaged(`&active=true&contract_type=put`);
+let arr   = [...calls, ...puts];
+
+// 2) Fallback — if still empty, retry without active=true (catalog)
+if (!arr.length) {
+  console.warn("[POLY expiries] empty with active=true — retrying without it");
+  calls = await fetchPaged(`&contract_type=call`);
+  puts  = await fetchPaged(`&contract_type=put`);
+  arr   = [...calls, ...puts];
+}
 
     // 3) Dedupe + sort dates 'YYYY-MM-DD'
     const uniq = new Set<string>();
