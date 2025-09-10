@@ -1790,30 +1790,90 @@ async function fetchOptionChain(symbol: string, opts?: { force?: boolean }) {
     d?.expirationDate ?? d?.expiration ?? d?.expiry ?? d?.expDate ?? null;
 
 
-  async function loadExpirations(tkr: string) {
-    setLoadingExp(true);
-    try {
-      const data = await fetchOptionChain(tkr);
-      const todayUTC = toYMD_UTC(new Date());
-      const exps = Array.from(
-        new Set(
-          data
-            .map((d: any) => normalizeExpiry(getExpirationRaw(d)))
-            .filter((s: string | null): s is string => !!s)
-        )
-      )
-        .filter((d) => d >= todayUTC)
-        .sort();
-      setExpirations(exps);
-      if (!exps.includes(form.expiry)) {
-        setForm((f) => ({ ...f, expiry: exps[0] ?? f.expiry }));
-      }
-    } catch (e) {
-      addDebug("loadExpirations error", e);
-    } finally {
-      setLoadingExp(false);
-    }
+// Expirations for an underlying (Polygon; chunked + fallback)
+async function loadExpirations(tkr: string) {
+  const TKR = String(tkr || "").trim().toUpperCase();
+  if (!TKR) {
+    setExpirations([]);
+    return;
   }
+
+  setLoadingExp(true);
+  try {
+// Build a small base and try active=true first (fast), then fallback if empty
+const basePath =
+  `/v3/reference/options/contracts` +
+  `?underlying_ticker=${encodeURIComponent(TKR)}` +
+  `&expiration_date=${encodeURIComponent(ymd)}` +
+  `&contract_type=${encodeURIComponent(type.toLowerCase())}` +
+  `&limit=1000`;
+
+// 1) First attempt — current contracts only
+let path = `${basePath}&active=true`;
+let url  = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(path)}`;
+console.log("[POLY strikes] URL:", url);
+
+let r = await fetch(url);
+console.log("[POLY strikes] status:", r.status);
+
+let j: any = r.ok ? await r.json() : null;
+let arr: any[] =
+  (Array.isArray(j?.results) && j.results) ||
+  (Array.isArray(j?.data)    && j.data)    ||
+  [];
+
+// 2) Fallback — if empty, retry without active=true (SPY often needs this)
+if (!arr.length) {
+  console.warn("[POLY strikes] empty with active=true — retrying without it");
+  path = basePath; // drop active=true
+  url  = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(path)}`;
+  console.log("[POLY strikes] URL (retry):", url);
+
+  const r2 = await fetch(url);
+  console.log("[POLY strikes] status (retry):", r2.status);
+
+  if (r2.ok) {
+    const j2 = await r2.json();
+    arr =
+      (Array.isArray(j2?.results) && j2.results) ||
+      (Array.isArray(j2?.data)    && j2.data)    ||
+      [];
+  }
+}
+
+    // 1) Fast, current-only slices by contract_type
+    let calls = await fetchSlice(`&active=true&contract_type=call`);
+    let puts  = await fetchSlice(`&active=true&contract_type=put`);
+    let arr   = [...calls, ...puts];
+
+    // 2) Fallback if empty: drop active=true (catalog can be bigger, but we still split)
+    if (!arr.length) {
+      console.warn("[POLY expiries] empty with active=true — retrying without it");
+      calls = await fetchSlice(`&contract_type=call`);
+      puts  = await fetchSlice(`&contract_type=put`);
+      arr   = [...calls, ...puts];
+    }
+
+    // 3) Dedupe + sort expiration_date → 'YYYY-MM-DD'
+    const uniq = new Set<string>();
+    for (const c of arr) {
+      const d = String(c?.expiration_date || c?.expirationDate || "").slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) uniq.add(d);
+    }
+    const list = Array.from(uniq).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    setExpirations(list);
+
+    // 4) Clear invalid selection for the new ticker, if needed
+    if (!list.includes(form.expiry)) {
+      setForm((f) => ({ ...f, expiry: "" }));
+    }
+  } catch (e) {
+    console.warn("[expirations] load error:", e);
+    setExpirations([]);
+  } finally {
+    setLoadingExp(false);
+  }
+}
 
 function filterStrikesForView(args: {
   spot: number | null;
