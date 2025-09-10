@@ -1790,7 +1790,7 @@ async function fetchOptionChain(symbol: string, opts?: { force?: boolean }) {
     d?.expirationDate ?? d?.expiration ?? d?.expiry ?? d?.expDate ?? null;
 
 
-// Expirations for an underlying (Polygon; chunked + fallback)
+// Expirations for an underlying (Polygon; chunked + fallback, no helpers)
 async function loadExpirations(tkr: string) {
   const TKR = String(tkr || "").trim().toUpperCase();
   if (!TKR) {
@@ -1800,58 +1800,67 @@ async function loadExpirations(tkr: string) {
 
   setLoadingExp(true);
   try {
-// Build a small base and try active=true first (fast), then fallback if empty
-const basePath =
-  `/v3/reference/options/contracts` +
-  `?underlying_ticker=${encodeURIComponent(TKR)}` +
-  `&limit=500`;
+    // smaller page + split by contract_type reduces payload (SPY-safe)
+    const basePath =
+      `/v3/reference/options/contracts` +
+      `?underlying_ticker=${encodeURIComponent(TKR)}` +
+      `&limit=500`;
 
-// 1) First attempt — current contracts only
-let path = `${basePath}&active=true`;
-let url  = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(path)}`;
-console.log("[POLY strikes] URL:", url);
+    // 1) First attempt — active=true (current contracts), calls + puts
+    let urlCall = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(
+      `${basePath}&active=true&contract_type=call`
+    )}`;
+    let urlPut  = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(
+      `${basePath}&active=true&contract_type=put`
+    )}`;
 
-let r = await fetch(url);
-console.log("[POLY strikes] status:", r.status);
+    console.log("[POLY expiries] URL call:", urlCall);
+    console.log("[POLY expiries] URL put :", urlPut);
 
-let j: any = r.ok ? await r.json() : null;
-let arr: any[] =
-  (Array.isArray(j?.results) && j.results) ||
-  (Array.isArray(j?.data)    && j.data)    ||
-  [];
+    let rCall = await fetch(urlCall);
+    let rPut  = await fetch(urlPut);
 
-// 2) Fallback — if empty, retry without active=true (SPY often needs this)
-if (!arr.length) {
-  console.warn("[POLY strikes] empty with active=true — retrying without it");
-  path = basePath; // drop active=true
-  url  = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(path)}`;
-  console.log("[POLY strikes] URL (retry):", url);
+    console.log("[POLY expiries] status call:", rCall.status);
+    console.log("[POLY expiries] status put :", rPut.status);
 
-  const r2 = await fetch(url);
-  console.log("[POLY strikes] status (retry):", r2.status);
+    let jCall: any = rCall.ok ? await rCall.json() : null;
+    let jPut : any = rPut.ok  ? await rPut.json()  : null;
 
-  if (r2.ok) {
-    const j2 = await r2.json();
-    arr =
-      (Array.isArray(j2?.results) && j2.results) ||
-      (Array.isArray(j2?.data)    && j2.data)    ||
-      [];
-  }
-}
+    let arr: any[] = [
+      ...(((jCall?.results ?? jCall?.data) as any[]) || []),
+      ...(((jPut ?.results ?? jPut ?.data) as any[]) || []),
+    ];
 
-    // 1) Fast, current-only slices by contract_type
-    let calls = await fetchSlice(`&active=true&contract_type=call`);
-    let puts  = await fetchSlice(`&active=true&contract_type=put`);
-
-    // 2) Fallback if empty: drop active=true (catalog can be bigger, but we still split)
+    // 2) Fallback — if empty, retry without active=true (catalog query)
     if (!arr.length) {
       console.warn("[POLY expiries] empty with active=true — retrying without it");
-      calls = await fetchSlice(`&contract_type=call`);
-      puts  = await fetchSlice(`&contract_type=put`);
-      arr   = [...calls, ...puts];
+
+      urlCall = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(
+        `${basePath}&contract_type=call`
+      )}`;
+      urlPut  = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(
+        `${basePath}&contract_type=put`
+      )}`;
+
+      console.log("[POLY expiries] URL call (retry):", urlCall);
+      console.log("[POLY expiries] URL put  (retry):", urlPut);
+
+      rCall = await fetch(urlCall);
+      rPut  = await fetch(urlPut);
+
+      console.log("[POLY expiries] status call (retry):", rCall.status);
+      console.log("[POLY expiries] status put  (retry):", rPut.status);
+
+      jCall = rCall.ok ? await rCall.json() : null;
+      jPut  = rPut.ok  ? await rPut.json()  : null;
+
+      arr = [
+        ...(((jCall?.results ?? jCall?.data) as any[]) || []),
+        ...(((jPut ?.results ?? jPut ?.data) as any[]) || []),
+      ];
     }
 
-    // 3) Dedupe + sort expiration_date → 'YYYY-MM-DD'
+    // 3) Dedupe + sort dates 'YYYY-MM-DD'
     const uniq = new Set<string>();
     for (const c of arr) {
       const d = String(c?.expiration_date || c?.expirationDate || "").slice(0, 10);
@@ -1860,7 +1869,7 @@ if (!arr.length) {
     const list = Array.from(uniq).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     setExpirations(list);
 
-    // 4) Clear invalid selection for the new ticker, if needed
+    // 4) Clear invalid selection after ticker changes
     if (!list.includes(form.expiry)) {
       setForm((f) => ({ ...f, expiry: "" }));
     }
