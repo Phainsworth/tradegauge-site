@@ -2814,45 +2814,50 @@ useEffect(() => {
   let cancelled = false;
 
   (async () => {
-    // Start expirations (returns list)
-    const expsPromise = loadExpirations(form.ticker);
-
-    // In parallel: probe the soonest expiry and load strikes right away
-    const ymd = await fastFindNearestExpiry(form.ticker, form.type as "CALL" | "PUT");
-    if (!cancelled && ymd) {
-      if (ymd !== form.expiry) {
-        setForm((f) => ({ ...f, expiry: ymd })); // keep UI in sync
-      }
-      await requestStrikes(
-  form.ticker,
-  form.type as "CALL" | "PUT",
-  ymd // ← use the fast-found nearest expiry, not form.expiry
-);
-    }
-
-    // Await the full expirations list (UI dropdown)
-    await expsPromise;
-  })().catch((e) => addDebug("Prime type→parallel exp+strikes error", e));
-
-  return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [form.ticker, form.type]);
-
-// Strikes when ticker/type/expiry change (per-expiry only)
-useEffect(() => {
-  if (!form.ticker.trim() || !form.type || !form.expiry) return;
-
-  console.log("[WATCH strikes]", {
-    t: form.ticker,
-    type: form.type,
-    exp: form.expiry
+  // 1) Start fetching the full expirations list (async, may take time)
+  const expsPromise = loadExpirations(form.ticker).catch((e) => {
+    addDebug("Expirations load error", e);
+    return; // keep going; we’ll still try to prime strikes if we can
   });
 
-requestStrikes(
-  form.ticker,
-  form.type as "CALL" | "PUT",
-  form.expiry
-).catch?.((e: any) => addDebug("Strikes effect error", e));
+  // 2) In parallel, probe the soonest expiry quickly
+  let ymd = await fastFindNearestExpiry(form.ticker, form.type as "CALL" | "PUT")
+    .catch((e) => {
+      addDebug("fastFindNearestExpiry error", e);
+      return "";
+    });
+
+  // 3) If quick probe failed, wait for full list and pick nearest
+  if (!cancelled && (!ymd || ymd === "")) {
+    await expsPromise; // ensure expirations[] is populated
+    if (!cancelled && !form.expiry && Array.isArray(expirations) && expirations.length) {
+      const fallback = pickNearestExpiry(expirations);
+      if (fallback) ymd = fallback;
+    }
+  }
+
+  // 4) If we found a YMD, reflect it in the UI immediately and request strikes
+  if (!cancelled && ymd) {
+    // Inject YMD into the dropdown list NOW so the Select shows it immediately
+    setExpirations((prev) =>
+      Array.isArray(prev) && prev.includes(ymd) ? prev : [ymd, ...(Array.isArray(prev) ? prev : [])]
+    );
+
+    if (ymd !== form.expiry) {
+      setForm((f) => ({ ...f, expiry: ymd }));
+    }
+
+    await requestStrikes(
+      form.ticker,
+      form.type as "CALL" | "PUT",
+      ymd
+    ).catch((e) => addDebug("requestStrikes (prime) error", e));
+  }
+
+  // 5) Ensure the full expirations list finishes (for the full dropdown)
+  await expsPromise;
+})().catch((e) => addDebug("Prime type→parallel exp+strikes error", e));
+
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [form.ticker, form.type, form.expiry]);
