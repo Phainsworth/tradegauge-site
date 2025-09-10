@@ -1929,7 +1929,7 @@ async function fetchPaged(
   return arr;
 }
 
-// Expirations for an underlying (Polygon; SPY-optimized + incremental UI fill)
+// Expirations for an underlying (Polygon; lighter set + 24-month cap + incremental UI fill)
 async function loadExpirations(tkr: string): Promise<string[]> {
   const TKR = String(tkr ?? "").trim().toUpperCase();
   if (!TKR) {
@@ -1971,10 +1971,14 @@ async function loadExpirations(tkr: string): Promise<string[]> {
     }
     return null;
   };
+
+  // format Date -> YYYY-MM-DD
+  const toYMD = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString().slice(0, 10);
+
   // ------------------------------------
 
   try {
-    // Sort by expiry asc so we walk forward in time; use active contracts; larger page size
+    // Sort by expiry asc; use active contracts; larger page size for fewer round-trips
     const basePath =
       `/v3/reference/options/contracts` +
       `?underlying_ticker=${encodeURIComponent(TKR)}` +
@@ -1986,13 +1990,17 @@ async function loadExpirations(tkr: string): Promise<string[]> {
     // start fresh so the dropdown can fill incrementally
     setExpirations([]);
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = toYMD(new Date());
+    const cutoffDate = new Date();
+    cutoffDate.setMonth(cutoffDate.getMonth() + 24); // cap at 24 months ahead
+    const cutoff = toYMD(cutoffDate);
+
     let cursor: string | null = null;
     let page = 0;
 
-    // SPY has tons of contracts — keep a generous cap but early-stop once we have enough dates
-    const MAX_PAGES = 24;
-    const MIN_UNIQUE_EXPS = 50;
+    // lighter target: ~30% fewer than 50 → 35
+    const MAX_PAGES = 24;       // still generous for tickers like SPY
+    const MIN_UNIQUE_EXPS = 35; // early-stop once we have ~35 future expirations
 
     while (page < MAX_PAGES) {
       const path = cursor ? `${basePath}&cursor=${encodeURIComponent(cursor)}` : basePath;
@@ -2000,7 +2008,7 @@ async function loadExpirations(tkr: string): Promise<string[]> {
       const contracts = extractContracts(j);
       if (!Array.isArray(contracts) || contracts.length === 0) break;
 
-      // collect expirations from this page (future-only)
+      // collect expirations from this page (future-only, capped at 24 months)
       for (const c of contracts) {
         const raw =
           c?.expiration_date ??
@@ -2015,7 +2023,7 @@ async function loadExpirations(tkr: string): Promise<string[]> {
             ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
             : raw.slice(0, 10);
 
-        if (/^\d{4}-\d{2}-\d{2}$/.test(ymd) && ymd >= today) {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(ymd) && ymd >= today && ymd <= cutoff) {
           seen.add(ymd);
         }
       }
@@ -2023,7 +2031,7 @@ async function loadExpirations(tkr: string): Promise<string[]> {
       // incremental update so the UI doesn't wait for all pages
       setExpirations(Array.from(seen).sort());
 
-      // stop if we already have enough dates
+      // early-stop once we have enough dates
       if (seen.size >= MIN_UNIQUE_EXPS) break;
 
       const next = nextCursorFrom(j);
