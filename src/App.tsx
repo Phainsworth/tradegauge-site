@@ -5022,9 +5022,9 @@ background: linear-gradient(90deg,
       </div>
 {/* LAYER 1.5: faint side portraits */}
       <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 15 }}>
-{/* powell — left (flush) */}
+{/* elon — left (flush) */}
 <img
-  src="/powell.png"
+  src="/elon.png"
   alt=""
   aria-hidden="true"
 className="
