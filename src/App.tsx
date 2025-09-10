@@ -1958,20 +1958,8 @@ if (!arr.length) {
     const list = Array.from(uniq).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     setExpirations(list);
      out = list;
-// If no expiry chosen yet, auto-pick the nearest one and trigger strikes
-if (!form.expiry && list.length) {
-  const auto = pickNearestExpiry(list);
-  setForm((f) => ({ ...f, expiry: auto }));
-
-  // Optional: if user has already chosen CALL/PUT, kick strikes right now
-  if (form.type) {
-    loadStrikesForExpiry(
-      TKR,
-      form.type as "CALL" | "PUT",
-      auto
-    ).catch((e) => addDebug("Strikes (auto from expiries) error", e));
-  }
-}
+// Expiry dropdown: don’t auto-pick here, rely on fastFindNearestExpiry
+// (keeps UI responsive and avoids double-setting expiry)
     // 4) Clear invalid selection after ticker changes
     if (!list.includes(form.expiry)) {
       setForm((f) => ({ ...f, expiry: "" }));
