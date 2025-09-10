@@ -63,6 +63,50 @@ const [showAllStrikes, setShowAllStrikes] = useState(false);
 const lastStrikesKeyRef = useRef<string>("");
   const [loadingExp, setLoadingExp] = useState(false);
   const [loadingStrikes, setLoadingStrikes] = useState(false);
+// Reset everything for a brand-new session (soft reset)
+// Call with resetAll({ hard: true }) if you ever want a full page reload instead.
+function resetAll(opts: { hard?: boolean } = {}) {
+  if (opts.hard) {
+    // Hard refresh (acts like first visit)
+    window.location.href = window.location.origin;
+    return;
+  }
+
+  // --- stop any UI flows ---
+  try { primeStrikesGuardRef.current = false; } catch {}
+  try { inflightStrikesKeyRef.current = ""; } catch {}
+  try { lastStrikesKeyRef.current = ""; } catch {}
+
+  // --- clear dropdown data ---
+  setExpirations([]);
+  setLoadingExp(false);
+  setStrikes([]);
+  setLoadingStrikes(false);
+
+  // --- clear form ---
+  setForm((f) => ({
+    ...f,
+    ticker: "",
+    type: "",
+    expiry: "",
+    strike: "",
+    pricePaid: "",
+    spot: null,
+  }));
+
+  // --- clear search UI (if present in your codebase) ---
+  try { setTickerQuery(""); } catch {}
+  try { setTickerOpts([]); } catch {}
+  try { setTickerOpen(false); } catch {}
+
+  // --- clear analysis/results UI (if present) ---
+  try { setSubmitted(false); } catch {}
+  try { setRoutes(null); } catch {}
+  try { setIsGenLoading(false); } catch {}
+  try { setLlmStatus(""); } catch {}
+
+  // Leave any long-lived caches (e.g., macro events) alone for speed.
+}
 
 function makeStrikesKey(tkr: string, type: "CALL" | "PUT", ymd: string) {
   return `${String(tkr).trim().toUpperCase()}|${type}|${ymd}`;
@@ -3588,7 +3632,7 @@ function renderTLDR() {
 {submitted && !isGenLoading && (
 <div className="flex justify-center mb-6">
   <button
-    onClick={resetToHome}
+    onClick={() => resetAll()}
     className="inline-flex items-center gap-2 rounded-xl border border-purple-500 bg-neutral-900/70 backdrop-blur px-4 py-2 text-sm text-purple-300 hover:bg-purple-500/10 hover:shadow-[0_0_10px_rgba(168,85,247,0.6)] active:scale-[0.99] transition"
     title="Clear and start a fresh check"
     aria-label="Try another contract"
