@@ -1900,7 +1900,7 @@ function filterStrikesForView(args: {
     if (Array.isArray(node?.[lc])) return node[lc];
     return [];
   }
-// Load strikes ONLY for the chosen expiry (no cross-expiry bleed)
+// Load strikes ONLY for the chosen expiry (Polygon; no Finnhub dependency)
 async function loadStrikesForExpiry(tkr: string, type: "CALL" | "PUT", expiryYMD: string) {
   // Guard
   if (!tkr || !type || !expiryYMD) {
@@ -1911,27 +1911,50 @@ async function loadStrikesForExpiry(tkr: string, type: "CALL" | "PUT", expiryYMD
 
   setLoadingStrikes(true);
   try {
-    // 1) Pull full chain once (cached) and isolate the single expiry node
-    const data = await fetchOptionChain(tkr);
-    const target = (data || []).find(
-      (node: any) => normalizeExpiry(getExpirationRaw(node)) === expiryYMD
-    );
+    // Normalize inputs
+    const TKR = String(tkr).trim().toUpperCase();
+    const ymd = /^\d{4}-\d{2}-\d{2}$/.test(expiryYMD)
+      ? expiryYMD
+      : (() => {
+          const s = String(expiryYMD || "").trim();
+          if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(s)) {
+            const [Y, M, D] = s.split("-");
+            return `${Y}-${M.padStart(2, "0")}-${D.padStart(2, "0")}`;
+          }
+          return s;
+        })();
 
-    const legs = target ? extractLegsForType(target, type) : [];
+    // Pull contracts for that exact expiry from Polygon v3 via your Netlify proxy
+    const path = `/v3/reference/options/contracts?underlying_ticker=${encodeURIComponent(
+      TKR
+    )}&expiration_date=${encodeURIComponent(ymd)}&limit=1000&active=true`;
 
-    // 2) Map to real strike prices for that expiry only (keep decimals like 172.5)
-    const list: number[] = Array.from(
-      new Set(
-        legs
-          .map((o: any) => Number(o?.strike ?? o?.strikePrice))
-          .filter((n) => Number.isFinite(n) && n > 0)
-      )
-    ).sort((a, b) => a - b);
+    const r = await fetch(`/.netlify/functions/polygon-proxy?path=${encodeURIComponent(path)}`);
+    if (!r.ok) throw new Error(`polygon strikes ${r.status}`);
+    const j = await r.json();
 
-    // Save the full per-expiry list
+    // Map strictly from returned contracts
+    const arr: any[] =
+      (Array.isArray(j?.results) && j.results) ||
+      (Array.isArray(j?.data) && j.data) ||
+      [];
+
+    // Keep real decimals (e.g., 172.5)
+    const uniq = new Set<number>();
+    for (const c of arr) {
+      const cp = (c?.contract_type || c?.type || "").toUpperCase();
+      if (cp && (cp.startsWith("C") ? "CALL" : "PUT") !== type) continue;
+
+      const sp = Number(c?.strike_price ?? c?.strikePrice);
+      if (Number.isFinite(sp) && sp > 0) uniq.add(sp);
+    }
+
+    const list = Array.from(uniq).sort((a, b) => a - b);
+
+    // Save full list for this expiry
     setAllStrikes(list);
 
-    // 3) Build the visible window (≈ STRIKES_EACH_SIDE around spot/current)
+    // Build visible window around spot/current (your existing helper)
     const spotNum =
       form.spot !== "" && Number.isFinite(Number(form.spot)) && Number(form.spot) > 0
         ? Number(form.spot)
@@ -1947,19 +1970,18 @@ async function loadStrikesForExpiry(tkr: string, type: "CALL" | "PUT", expiryYMD
       : filterStrikesForView({
           spot: spotNum,
           all: list,
-          current: curr,               // keep the current selection visible if still valid
-          eachSide: STRIKES_EACH_SIDE, // same windowing you already use
+          current: curr,
+          eachSide: STRIKES_EACH_SIDE,
         });
 
-    // Safety: never render empty; fall back to full list
     if (!Array.isArray(view) || view.length === 0) view = [...list];
     if (curr != null && !view.includes(curr)) view.push(curr);
     view.sort((a, b) => a - b);
     setStrikes(view);
 
-    // 4) If the old strike isn’t listed on this expiry, clear it (auto-select will repopulate)
+    // If the old strike isn’t valid for this expiry, clear it (auto-select will repopulate)
     if (!list.includes(Number(form.strike))) {
-      strikeTouchedRef.current = false; // allow auto-select to kick in
+      strikeTouchedRef.current = false;
       setForm((f) => ({ ...f, strike: "" }));
     }
   } catch (e) {
@@ -1970,7 +1992,6 @@ async function loadStrikesForExpiry(tkr: string, type: "CALL" | "PUT", expiryYMD
     setLoadingStrikes(false);
   }
 }
-
 
 
  // Spot (Finnhub) — via Netlify proxy (no FINNHUB_KEY in browser)
