@@ -5029,7 +5029,7 @@ background: linear-gradient(90deg,
   aria-hidden="true"
 className="
   absolute left-[-15vw] top-1/2 -translate-y-1/2
-  h-[90vh] w-auto
+  h-[100vh] w-auto
   opacity-15
   mix-blend-soft-light
   pointer-events-none select-none
@@ -5044,7 +5044,7 @@ className="
   aria-hidden="true"
   className="
     absolute right-[-30vw] top-1/2 -translate-y-1/2
-    h-[85vh] w-auto
+    h-[100vh] w-auto
     opacity-15
     mix-blend-soft-light
     pointer-events-none select-none
