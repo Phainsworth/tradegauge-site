@@ -1825,12 +1825,39 @@ async function loadExpirations(tkr: string) {
 
     let jCall: any = rCall.ok ? await rCall.json() : null;
     let jPut : any = rPut.ok  ? await rPut.json()  : null;
+console.log("[POLY expiries] shapes:", {
+  callKeys: jCall ? Object.keys(jCall) : null,
+  putKeys:  jPut  ? Object.keys(jPut)  : null,
+  callLens: {
+    results: jCall?.results?.length,
+    data:    jCall?.data?.length,
+    bodyRes: jCall?.body?.results?.length,
+    bodyDat: jCall?.body?.data?.length,
+  },
+  putLens: {
+    results: jPut?.results?.length,
+    data:    jPut?.data?.length,
+    bodyRes: jPut?.body?.results?.length,
+    bodyDat: jPut?.body?.data?.length,
+  }
+});
+   function extractContracts(j: any): any[] {
+  if (!j) return [];
+  // handle common proxy wrappers
+  if (Array.isArray(j.results)) return j.results;
+  if (Array.isArray(j.data))    return j.data;
+  if (j.body) {
+    if (Array.isArray(j.body.results)) return j.body.results;
+    if (Array.isArray(j.body.data))    return j.body.data;
+  }
+  return [];
+}
 
-    let arr: any[] = [
-      ...(((jCall?.results ?? jCall?.data) as any[]) || []),
-      ...(((jPut ?.results ?? jPut ?.data) as any[]) || []),
-    ];
-
+let arr: any[] = [
+  ...extractContracts(jCall),
+  ...extractContracts(jPut),
+];
+     console.log("[POLY expiries] combined count:", arr.length);
     // 2) Fallback — if empty, retry without active=true (catalog query)
     if (!arr.length) {
       console.warn("[POLY expiries] empty with active=true — retrying without it");
