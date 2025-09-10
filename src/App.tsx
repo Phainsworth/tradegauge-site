@@ -59,6 +59,7 @@ const [plan, setPlan] = useState<PlanOut | null>(null);
 const [showAllStrikes, setShowAllStrikes] = useState(false);
   const strikeTouchedRef = useRef(false);
    const inflightStrikesKeyRef = useRef<string>("");
+   const primeStrikesGuardRef = useRef(false);
 const lastStrikesKeyRef = useRef<string>("");
   const [loadingExp, setLoadingExp] = useState(false);
   const [loadingStrikes, setLoadingStrikes] = useState(false);
@@ -1857,49 +1858,90 @@ function pickNearestExpiry(dates: string[]): string {
   return (future.length ? future[0] : dates.slice().sort()[0]) || "";
 }
 // Expirations for an underlying (Polygon; chunked + fallback, no helpers)
-async function loadExpirations(tkr: string) {
-   let out: string[] = [];
+async function loadExpirations(tkr: string): Promise<string[]> {
   const TKR = String(tkr || "").trim().toUpperCase();
   if (!TKR) {
     setExpirations([]);
-    return;
+    return [];
   }
 
   setLoadingExp(true);
+  const seen = new Set<string>(); // collect distinct YYYY-MM-DD dates here
+
   try {
-// smaller page; we’ll paginate
-const basePath =
-  `/v3/reference/options/contracts` +
-  `?underlying_ticker=${encodeURIComponent(TKR)}` +
-  `&limit=500`;
+    // smaller page; we’ll paginate
+    const basePath =
+      `/v3/reference/options/contracts` +
+      `?underlying_ticker=${encodeURIComponent(TKR)}` +
+      `&limit=500`;
 
-const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
 
-function extractContracts(j: any): any[] {
-  if (!j) return [];
-  if (Array.isArray(j.results)) return j.results;
-  if (Array.isArray(j.data))    return j.data;
-  if (j.body) {
-    if (Array.isArray(j.body.results)) return j.body.results;
-    if (Array.isArray(j.body.data))    return j.body.data;
-  }
-  return [];
-}
+    // NOTE: using your existing helpers extractContracts(...) and nextCursorFrom(...)
 
-// Try to pull the "cursor" token out of any next_* field Polygon returns
-function nextCursorFrom(j: any): string | null {
-  const candidates = [j?.next_cursor, j?.cursor, j?.next, j?.next_url];
-  for (const v of candidates) {
-    if (!v) continue;
-    if (typeof v === "string") {
-      // If it’s a full URL or a path, parse ?cursor=
-      const m = v.match(/[?&]cursor=([^&]+)/);
-      if (m) return decodeURIComponent(m[1]);
-      // Sometimes it’s already just the token:
-      if (!v.includes("http") && !v.includes("?")) return v;
+    // paginate up to a safe cap
+    let cursor: string | null = null;
+    let page = 0;
+    const MAX_PAGES = 6;
+
+    // clear first so UI can show early pages quickly
+    setExpirations([]);
+
+    while (page < MAX_PAGES) {
+      const path = cursor ? `${basePath}&cursor=${encodeURIComponent(cursor)}` : basePath;
+      const j = await poly(path);
+      const contracts = extractContracts(j);
+
+      if (!Array.isArray(contracts) || contracts.length === 0) break;
+
+      // collect expirations from this page
+      for (const c of contracts) {
+        const raw =
+          c?.expiration_date ||
+          c?.expirationDate ||
+          c?.exp_date ||
+          "";
+        if (!raw) continue;
+
+        // normalize to YYYY-MM-DD
+        let ymd = "";
+        if (typeof raw === "string") {
+          if (/^\d{8}$/.test(raw)) {
+            // 20251017 -> 2025-10-17
+            ymd = `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+          } else {
+            ymd = raw.slice(0, 10);
+          }
+        }
+        if (ymd && ymd.length === 10) {
+          seen.add(ymd);
+        }
+      }
+
+      // incremental update so the dropdown starts filling fast
+      const partial = Array.from(seen).sort();
+      setExpirations(partial);
+
+      // advance cursor (stop if none)
+      const next = nextCursorFrom(j);
+      if (!next) break;
+      cursor = next;
+      page++;
+
+      // yield to the UI between pages
+      await Promise.resolve();
     }
+
+    const list = Array.from(seen).sort();
+    setExpirations(list);
+    return list;
+  } catch (e) {
+    addDebug("loadExpirations error", e);
+    setExpirations([]);
+    return [];
+  } finally {
+    setLoadingExp(false);
   }
-  return null;
 }
 
 // Paginated fetch: gather up to ~40 distinct future expirations (max 6 pages)
@@ -2827,40 +2869,70 @@ useEffect(() => {
       return "";
     });
 
-  // 3) If quick probe failed, wait for full list and pick nearest
-  if (!cancelled && (!ymd || ymd === "")) {
-    await expsPromise; // ensure expirations[] is populated
-    if (!cancelled && !form.expiry && Array.isArray(expirations) && expirations.length) {
-      const fallback = pickNearestExpiry(expirations);
-      if (fallback) ymd = fallback;
-    }
+// 3) If quick probe failed, wait for full list and pick nearest
+if (!cancelled && (!ymd || ymd === "")) {
+  const list = await expsPromise; // <-- get the list from the promise
+  if (!cancelled && !form.expiry && Array.isArray(list) && list.length) {
+    const fallback = pickNearestExpiry(list);
+    if (fallback) ymd = fallback;
+  }
+}
+// 4) If we found a YMD, reflect it in the UI immediately and request strikes
+if (!cancelled && ymd) {
+  // Inject YMD into the dropdown list NOW so the Select shows it immediately
+  setExpirations((prev) =>
+    Array.isArray(prev) && prev.includes(ymd) ? prev : [ymd, ...(Array.isArray(prev) ? prev : [])]
+  );
+
+  if (ymd !== form.expiry) {
+    setForm((f) => ({ ...f, expiry: ymd }));
   }
 
-  // 4) If we found a YMD, reflect it in the UI immediately and request strikes
-  if (!cancelled && ymd) {
-    // Inject YMD into the dropdown list NOW so the Select shows it immediately
-    setExpirations((prev) =>
-      Array.isArray(prev) && prev.includes(ymd) ? prev : [ymd, ...(Array.isArray(prev) ? prev : [])]
-    );
-
-    if (ymd !== form.expiry) {
-      setForm((f) => ({ ...f, expiry: ymd }));
-    }
-
+  // prime guard so the expiry watcher doesn’t immediately re-request the same strikes
+  primeStrikesGuardRef.current = true;
+  try {
     await requestStrikes(
       form.ticker,
       form.type as "CALL" | "PUT",
       ymd
     ).catch((e) => addDebug("requestStrikes (prime) error", e));
+  } finally {
+    primeStrikesGuardRef.current = false; // let the expiry watcher skip exactly one cycle
   }
+}
 
-  // 5) Ensure the full expirations list finishes (for the full dropdown)
-  await expsPromise;
+// 5) Ensure the full expirations list finishes (for the full dropdown)
+await expsPromise;
 })().catch((e) => addDebug("Prime type→parallel exp+strikes error", e));
+
+return () => { cancelled = true; };
 
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [form.ticker, form.type, form.expiry]);
+}, [form.ticker, form.type]);
+   // Load strikes when the chosen expiry changes (guarded + deduped)
+useEffect(() => {
+  if (!form.ticker.trim() || !form.type || !form.expiry) return;
+
+  // If the TYPE watcher just primed this exact combo, skip one pass
+  if (primeStrikesGuardRef.current) {
+    primeStrikesGuardRef.current = false; // consume the guard
+    return;
+  }
+
+  const key = `${String(form.ticker).trim().toUpperCase()}|${form.type}|${form.expiry}`;
+  if (lastStrikesKeyRef.current === key || inflightStrikesKeyRef.current === key) {
+    // already loaded or in-flight — skip
+    return;
+  }
+
+  requestStrikes(
+    form.ticker,
+    form.type as "CALL" | "PUT",
+    form.expiry
+  ).catch((e) => addDebug("Strikes (expiry watcher) error", e));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [form.expiry]);
 // Re-center strikes whenever the raw list or spot/current changes
 useEffect(() => {
   if (!allStrikes.length) return;
