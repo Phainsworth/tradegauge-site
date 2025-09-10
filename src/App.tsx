@@ -5039,7 +5039,7 @@ className="
 
 {/* Trump — right (bleed) */}
 <img
-  src="/trump.png"
+  src="/trumpside.png"
   alt=""
   aria-hidden="true"
   className="
