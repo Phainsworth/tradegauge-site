@@ -1929,7 +1929,7 @@ async function fetchPaged(
   return arr;
 }
 
-// ---------- Expirations loader (incremental UI fill + return list) ----------
+// Expirations for an underlying (Polygon; SPY-optimized + incremental UI fill)
 async function loadExpirations(tkr: string): Promise<string[]> {
   const TKR = String(tkr ?? "").trim().toUpperCase();
   if (!TKR) {
@@ -1940,7 +1940,7 @@ async function loadExpirations(tkr: string): Promise<string[]> {
   setLoadingExp(true);
   const seen = new Set<string>(); // distinct YYYY-MM-DD values
 
-  // local helpers (scoped; no collisions)
+  // ---- local helpers (scoped here) ----
   const doPoly = async (path: string) => {
     const url = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(path)}`;
     const r = await fetch(url);
@@ -1971,19 +1971,28 @@ async function loadExpirations(tkr: string): Promise<string[]> {
     }
     return null;
   };
+  // ------------------------------------
 
   try {
+    // Sort by expiry asc so we walk forward in time; use active contracts; larger page size
     const basePath =
       `/v3/reference/options/contracts` +
       `?underlying_ticker=${encodeURIComponent(TKR)}` +
-      `&limit=500`;
+      `&active=true` +
+      `&sort=expiration_date` +
+      `&order=asc` +
+      `&limit=1000`;
 
     // start fresh so the dropdown can fill incrementally
     setExpirations([]);
 
+    const today = new Date().toISOString().slice(0, 10);
     let cursor: string | null = null;
     let page = 0;
-    const MAX_PAGES = 6;
+
+    // SPY has tons of contracts — keep a generous cap but early-stop once we have enough dates
+    const MAX_PAGES = 24;
+    const MIN_UNIQUE_EXPS = 50;
 
     while (page < MAX_PAGES) {
       const path = cursor ? `${basePath}&cursor=${encodeURIComponent(cursor)}` : basePath;
@@ -1991,7 +2000,7 @@ async function loadExpirations(tkr: string): Promise<string[]> {
       const contracts = extractContracts(j);
       if (!Array.isArray(contracts) || contracts.length === 0) break;
 
-      // collect expirations from this page
+      // collect expirations from this page (future-only)
       for (const c of contracts) {
         const raw =
           c?.expiration_date ??
@@ -2006,11 +2015,16 @@ async function loadExpirations(tkr: string): Promise<string[]> {
             ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
             : raw.slice(0, 10);
 
-        if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) seen.add(ymd);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(ymd) && ymd >= today) {
+          seen.add(ymd);
+        }
       }
 
       // incremental update so the UI doesn't wait for all pages
       setExpirations(Array.from(seen).sort());
+
+      // stop if we already have enough dates
+      if (seen.size >= MIN_UNIQUE_EXPS) break;
 
       const next = nextCursorFrom(j);
       if (!next) break;
