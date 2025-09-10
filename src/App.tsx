@@ -5024,7 +5024,7 @@ background: linear-gradient(90deg,
       <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 15 }}>
        {/* Musk — left (~30% width) */}
 <img
-  src="/musk.png"
+  src="/powell.png"
   alt=""
   aria-hidden="true"
   className="
