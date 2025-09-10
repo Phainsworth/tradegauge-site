@@ -2758,15 +2758,23 @@ useEffect(() => {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [form.ticker]);
-// Strikes when ticker/type/expiry changes (per-expiry list only)
+// Strikes when ticker/type/expiry change (per-expiry only)
 useEffect(() => {
   if (!form.ticker.trim() || !form.type || !form.expiry) return;
+
+  console.log("[WATCH strikes]", {
+    t: form.ticker,
+    type: form.type,
+    exp: form.expiry
+  });
+
   loadStrikesForExpiry(
     form.ticker,
     form.type as "CALL" | "PUT",
     form.expiry
   ).catch((e) => addDebug("Strikes effect error", e));
-// eslint-disable-next-line react-hooks/exhaustive-deps
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [form.ticker, form.type, form.expiry]);
 // Re-center strikes whenever the raw list or spot/current changes
 useEffect(() => {
@@ -2798,31 +2806,27 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [allStrikes, form.spot, form.strike, showAllStrikes]);
 
-// Auto-select closest strike to live spot whenever spot/strikes change,
+// Auto-select closest strike to live spot whenever spot or the full per-expiry list changes,
 // unless the user has manually chosen a strike.
 useEffect(() => {
-  if (!strikes.length) return;
-
+  if (!Array.isArray(allStrikes) || allStrikes.length === 0) return;
 
   const s = Number(form.spot);
   if (!Number.isFinite(s)) return;
 
-
-  // compute closest strike to spot
-  const closest = strikes.reduce(
+  // compute closest from the complete per-expiry list (more robust than a window)
+  const closest = allStrikes.reduce(
     (prev, curr) => (Math.abs(curr - s) < Math.abs(prev - s) ? curr : prev),
-    strikes[0]
+    allStrikes[0]
   );
-
 
   const current = Number(form.strike);
   const needsUpdate = !Number.isFinite(current) || Math.abs(current - closest) > 1e-9;
 
-
   if (needsUpdate && !strikeTouchedRef.current) {
     setForm((f) => ({ ...f, strike: String(closest) }));
   }
-}, [strikes, form.spot, form.ticker, form.type]);
+}, [allStrikes, form.spot, form.ticker, form.type]);
 
 
   // Spot polling (10s)
