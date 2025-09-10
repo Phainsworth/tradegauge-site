@@ -5020,7 +5020,38 @@ background: linear-gradient(90deg,
         <div className="tg-sun-glow" style={{ ["--sun-x" as any]: "50%", ["--sun-y" as any]: "10%" }} />
         <div className="tg-sun-rays" style={{ ["--sun-x" as any]: "50%", ["--sun-y" as any]: "10%" }} />
       </div>
+{/* LAYER 1.5: faint side portraits */}
+      <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 15 }}>
+        {/* Musk — left */}
+        <img
+          src="/musk.png"
+          alt=""
+          aria-hidden="true"
+          className="
+            absolute left-0 top-1/3
+            w-[34vw] max-w-[500px] h-auto
+            opacity-10
+            mix-blend-soft-light
+            select-none
+          "
+          style={{ filter: "blur(0.3px)" }}
+        />
 
+        {/* Trump — right */}
+        <img
+          src="/trump.png"
+          alt=""
+          aria-hidden="true"
+          className="
+            absolute right-0 top-1/4
+            w-[36vw] max-w-[540px] h-auto
+            opacity-10
+            mix-blend-soft-light
+            select-none
+          "
+          style={{ filter: "blur(0.3px)" }}
+        />
+      </div>
       {/* LAYER 2: stars (absolute; above sun for a nice light-over effect if desired) */}
       <div className="parallax-stars absolute inset-0 z-20">
         {stars.map((s, i) => (
