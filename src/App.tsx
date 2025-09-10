@@ -1789,7 +1789,14 @@ async function fetchOptionChain(symbol: string, opts?: { force?: boolean }) {
   const getExpirationRaw = (d: any) =>
     d?.expirationDate ?? d?.expiration ?? d?.expiry ?? d?.expDate ?? null;
 
-
+// Pick the nearest expiry date (closest >= today; else overall closest)
+function pickNearestExpiry(dates: string[]): string {
+  const today = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+  const future = dates.filter((d) => d >= today).sort();
+  if (future.length) return future[0];
+  // if all are past (rare), just return the earliest
+  return dates.slice().sort()[0] || "";
+}
 // Expirations for an underlying (Polygon; chunked + fallback, no helpers)
 async function loadExpirations(tkr: string) {
   const TKR = String(tkr || "").trim().toUpperCase();
@@ -1892,7 +1899,20 @@ if (!arr.length) {
     }
     const list = Array.from(uniq).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     setExpirations(list);
+// If no expiry chosen yet, auto-pick the nearest one and trigger strikes
+if (!form.expiry && list.length) {
+  const auto = pickNearestExpiry(list);
+  setForm((f) => ({ ...f, expiry: auto }));
 
+  // Optional: if user has already chosen CALL/PUT, kick strikes right now
+  if (form.type) {
+    loadStrikesForExpiry(
+      TKR,
+      form.type as "CALL" | "PUT",
+      auto
+    ).catch((e) => addDebug("Strikes (auto from expiries) error", e));
+  }
+}
     // 4) Clear invalid selection after ticker changes
     if (!list.includes(form.expiry)) {
       setForm((f) => ({ ...f, expiry: "" }));
