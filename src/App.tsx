@@ -1857,19 +1857,24 @@ function pickNearestExpiry(dates: string[]): string {
   const future = dates.filter((d) => d >= today).sort();
   return (future.length ? future[0] : dates.slice().sort()[0]) || "";
 }
-// Expirations for an underlying (Polygon; chunked + fallback, no helpers)
-async function loadExpirations(tkr: string): Promise<string[]> {
-  const TKR = String(tkr ?? "").trim().toUpperCase();
-  if (!TKR) {
-    setExpirations([]);
-    return [];
-  }
+// ---------- Polygon paged fetch (generic) ----------
+async function fetchPaged(
+  basePath: string,                  // e.g., `/v3/reference/options/contracts?underlying_ticker=AAPL&limit=500`
+  suffix: string = "",               // e.g., `&active=true&contract_type=call`
+  opts: { maxPages?: number; minUniqueExp?: number; since?: string } = {}
+): Promise<any[]> {
+  const { maxPages = 6, minUniqueExp = 40 } = opts;
+  const since = opts.since || new Date().toISOString().slice(0, 10);
 
-  setLoadingExp(true);
-  const seen = new Set<string>(); // collect distinct YYYY-MM-DD dates here
+  // local helpers (scoped; no collisions)
+  const doPoly = async (path: string) => {
+    const url = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(path)}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`polygon ${r.status}`);
+    return r.json();
+  };
 
-  // ---- helpers (scoped here so they can't go missing) ----
-  function extractContracts(j: any): any[] {
+  const extractContracts = (j: any): any[] => {
     if (!j) return [];
     if (Array.isArray(j.results)) return j.results;
     if (Array.isArray(j.data)) return j.data;
@@ -1878,45 +1883,112 @@ async function loadExpirations(tkr: string): Promise<string[]> {
       if (Array.isArray(j.body.data)) return j.body.data;
     }
     return [];
-  }
+  };
 
-  // Try to pull the "cursor" token out of any next_* field Polygon returns
-  function nextCursorFrom(j: any): string | null {
+  const nextCursorFrom = (j: any): string | null => {
     const candidates = [j?.next_cursor, j?.cursor, j?.next, j?.next_url];
     for (const v of candidates) {
       if (!v) continue;
       if (typeof v === "string") {
-        // If it’s a full URL or a path, parse ?cursor=
         const m = v.match(/[?&]cursor=([^&]+)/);
         if (m) return decodeURIComponent(m[1]);
-        // Sometimes it’s already just the token:
         if (!v.includes("http") && !v.includes("?")) return v;
       }
     }
     return null;
+  };
+
+  const arr: any[] = [];
+  const uniqExp = new Set<string>();
+  let cursor: string | null = null;
+
+  for (let page = 0; page < maxPages; page++) {
+    const path = `${basePath}${suffix}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const j = await doPoly(path);
+    const chunk = extractContracts(j);
+    if (!Array.isArray(chunk) || chunk.length === 0) break;
+
+    arr.push(...chunk);
+
+    // track future expirations so we can early-stop
+    for (const c of chunk) {
+      const raw = String(c?.expiration_date ?? c?.expirationDate ?? "").slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(raw) && raw >= since) uniqExp.add(raw);
+    }
+
+    const next = nextCursorFrom(j);
+    if (!next) break;
+    cursor = next;
+
+    if (uniqExp.size >= minUniqueExp) break;
+
+    // yield to UI between pages (keeps the main thread snappy)
+    await Promise.resolve();
   }
-  // -------------------------------------------------------
+
+  return arr;
+}
+
+// ---------- Expirations loader (incremental UI fill + return list) ----------
+async function loadExpirations(tkr: string): Promise<string[]> {
+  const TKR = String(tkr ?? "").trim().toUpperCase();
+  if (!TKR) {
+    setExpirations([]);
+    return [];
+  }
+
+  setLoadingExp(true);
+  const seen = new Set<string>(); // distinct YYYY-MM-DD values
+
+  // local helpers (scoped; no collisions)
+  const doPoly = async (path: string) => {
+    const url = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(path)}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`polygon ${r.status}`);
+    return r.json();
+  };
+
+  const extractContracts = (j: any): any[] => {
+    if (!j) return [];
+    if (Array.isArray(j.results)) return j.results;
+    if (Array.isArray(j.data)) return j.data;
+    if (j.body) {
+      if (Array.isArray(j.body.results)) return j.body.results;
+      if (Array.isArray(j.body.data)) return j.body.data;
+    }
+    return [];
+  };
+
+  const nextCursorFrom = (j: any): string | null => {
+    const candidates = [j?.next_cursor, j?.cursor, j?.next, j?.next_url];
+    for (const v of candidates) {
+      if (!v) continue;
+      if (typeof v === "string") {
+        const m = v.match(/[?&]cursor=([^&]+)/);
+        if (m) return decodeURIComponent(m[1]);
+        if (!v.includes("http") && !v.includes("?")) return v; // already a token
+      }
+    }
+    return null;
+  };
 
   try {
-    // smaller page; we’ll paginate
     const basePath =
       `/v3/reference/options/contracts` +
       `?underlying_ticker=${encodeURIComponent(TKR)}` +
       `&limit=500`;
 
-    // paginate up to a safe cap
+    // start fresh so the dropdown can fill incrementally
+    setExpirations([]);
+
     let cursor: string | null = null;
     let page = 0;
     const MAX_PAGES = 6;
 
-    // clear first so UI can show early pages quickly
-    setExpirations([]);
-
     while (page < MAX_PAGES) {
       const path = cursor ? `${basePath}&cursor=${encodeURIComponent(cursor)}` : basePath;
-      const j = await poly(path);
+      const j = await doPoly(path);
       const contracts = extractContracts(j);
-
       if (!Array.isArray(contracts) || contracts.length === 0) break;
 
       // collect expirations from this page
@@ -1926,33 +1998,26 @@ async function loadExpirations(tkr: string): Promise<string[]> {
           c?.expirationDate ??
           c?.exp_date ??
           "";
-        if (!raw) continue;
+        if (typeof raw !== "string" || raw.length < 8) continue;
 
         // normalize to YYYY-MM-DD
-        let ymd = "";
-        if (typeof raw === "string") {
-          if (/^\d{8}$/.test(raw)) {
-            // 20251017 -> 2025-10-17
-            ymd = `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
-          } else {
-            ymd = raw.slice(0, 10);
-          }
-        }
-        if (ymd && ymd.length === 10) {
-          seen.add(ymd);
-        }
+        const ymd =
+          /^\d{8}$/.test(raw)
+            ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+            : raw.slice(0, 10);
+
+        if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) seen.add(ymd);
       }
 
-      // incremental update so the dropdown starts filling fast
+      // incremental update so the UI doesn't wait for all pages
       setExpirations(Array.from(seen).sort());
 
-      // advance cursor (stop if none)
       const next = nextCursorFrom(j);
       if (!next) break;
       cursor = next;
       page += 1;
 
-      // yield to the UI between pages
+      // yield control to keep UI responsive between pages
       await Promise.resolve();
     }
 
@@ -1966,77 +2031,6 @@ async function loadExpirations(tkr: string): Promise<string[]> {
   } finally {
     setLoadingExp(false);
   }
-}
-
-// Paginated fetch: gather up to ~40 distinct future expirations (max 6 pages)
-async function fetchPaged(suffix: string, maxPages = 6, minUniqueExp = 40) {
-  let arr: any[] = [];
-  let uniqExp = new Set<string>();
-  let cursor: string | null = null;
-
-  for (let page = 0; page < maxPages; page++) {
-    const path = `${basePath}${suffix}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
-    const url  = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(path)}`;
-    
-
-    const r = await fetch(url);
-    
-    if (!r.ok) break;
-
-    const j = await r.json();
-    const chunk = extractContracts(j);
-    arr.push(...chunk);
-
-    // Track unique future expirations as we go (so we can early-stop)
-    for (const c of chunk) {
-      const d = String(c?.expiration_date || c?.expirationDate || "").slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d >= today) uniqExp.add(d);
-    }
-
-    const next = nextCursorFrom(j);
-    if (!next) break;
-    cursor = next;
-
-    if (uniqExp.size >= minUniqueExp) break;
-  }
-  return arr;
-}
-
-// 1) First attempt — current contracts only (active=true), split by contract_type
-let calls = await fetchPaged(`&active=true&contract_type=call`);
-let puts  = await fetchPaged(`&active=true&contract_type=put`);
-let arr   = [...calls, ...puts];
-
-// 2) Fallback — if still empty, retry without active=true (catalog)
-if (!arr.length) {
-  console.warn("[POLY expiries] empty with active=true — retrying without it");
-  calls = await fetchPaged(`&contract_type=call`);
-  puts  = await fetchPaged(`&contract_type=put`);
-  arr   = [...calls, ...puts];
-}
-
-    // 3) Dedupe + sort dates 'YYYY-MM-DD'
-    const uniq = new Set<string>();
-    for (const c of arr) {
-      const d = String(c?.expiration_date || c?.expirationDate || "").slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) uniq.add(d);
-    }
-    const list = Array.from(uniq).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-    setExpirations(list);
-     out = list;
-// Expiry dropdown: don’t auto-pick here, rely on fastFindNearestExpiry
-// (keeps UI responsive and avoids double-setting expiry)
-    // 4) Clear invalid selection after ticker changes
-    if (!list.includes(form.expiry)) {
-      setForm((f) => ({ ...f, expiry: "" }));
-    }
-  } catch (e) {
-    console.warn("[expirations] load error:", e);
-    setExpirations([]);
-  } finally {
-    setLoadingExp(false);
-  }
-   return out;
 }
 
 function filterStrikesForView(args: {
