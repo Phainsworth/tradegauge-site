@@ -5027,13 +5027,13 @@ background: linear-gradient(90deg,
   src="/powell.png"
   alt=""
   aria-hidden="true"
-  className="
-    absolute left-5 top-1/2 -translate-y-1/2
-    h-[85vh] w-auto
-    opacity-15
-    mix-blend-soft-light
-    pointer-events-none select-none
-  "
+className="
+  absolute left-[-8vw] top-1/2 -translate-y-1/2
+  h-[85vh] w-auto
+  opacity-15
+  mix-blend-soft-light
+  pointer-events-none select-none
+"
   style={{ filter: "blur(0.3px)" }}
 />
 
