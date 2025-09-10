@@ -1791,14 +1791,14 @@ async function fetchOptionChain(symbol: string, opts?: { force?: boolean }) {
 
 // Pick the nearest expiry date (closest >= today; else overall closest)
 function pickNearestExpiry(dates: string[]): string {
-  const today = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+  if (!Array.isArray(dates) || dates.length === 0) return "";
+  const today = new Date().toISOString().slice(0, 10);
   const future = dates.filter((d) => d >= today).sort();
-  if (future.length) return future[0];
-  // if all are past (rare), just return the earliest
-  return dates.slice().sort()[0] || "";
+  return (future.length ? future[0] : dates.slice().sort()[0]) || "";
 }
 // Expirations for an underlying (Polygon; chunked + fallback, no helpers)
 async function loadExpirations(tkr: string) {
+   let out: string[] = [];
   const TKR = String(tkr || "").trim().toUpperCase();
   if (!TKR) {
     setExpirations([]);
@@ -1899,6 +1899,7 @@ if (!arr.length) {
     }
     const list = Array.from(uniq).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     setExpirations(list);
+     out = list;
 // If no expiry chosen yet, auto-pick the nearest one and trigger strikes
 if (!form.expiry && list.length) {
   const auto = pickNearestExpiry(list);
@@ -1923,6 +1924,7 @@ if (!form.expiry && list.length) {
   } finally {
     setLoadingExp(false);
   }
+   return out;
 }
 
 function filterStrikesForView(args: {
@@ -2758,6 +2760,40 @@ useEffect(() => {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [form.ticker]);
+// When the user picks CALL/PUT, load expirations, auto-pick nearest,
+// then immediately load strikes for that picked expiry.
+useEffect(() => {
+  if (!form.ticker?.trim() || !form.type) return;
+
+  console.log("[PRIME] type set — fetching expirations and strikes", {
+    t: form.ticker, type: form.type
+  });
+
+  (async () => {
+    // 1) fetch expirations (loadExpirations now returns the list)
+    const exps = await loadExpirations(form.ticker);
+    if (!Array.isArray(exps) || exps.length === 0) return;
+
+    // 2) pick nearest date; set it if changed
+    const auto = pickNearestExpiry(exps); // you already have this helper
+    const effExpiry = auto || form.expiry || "";
+    if (effExpiry && effExpiry !== form.expiry) {
+      setForm((f) => ({ ...f, expiry: effExpiry }));
+    }
+
+    // 3) immediately load strikes for that expiry
+    if (effExpiry) {
+      await loadStrikesForExpiry(
+        form.ticker,
+        form.type as "CALL" | "PUT",
+        effExpiry
+      );
+    }
+  })().catch((e) => addDebug("Prime type→exp+strikes error", e));
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [form.ticker, form.type]);
+
 // Strikes when ticker/type/expiry change (per-expiry only)
 useEffect(() => {
   if (!form.ticker.trim() || !form.type || !form.expiry) return;
