@@ -2694,7 +2694,26 @@ useEffect(() => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.ticker]);
 
+// Reset dependent fields when ticker changes, then load expirations (canonical)
+useEffect(() => {
+  if (!form.ticker || !form.ticker.trim()) return;
 
+  console.log("[WATCH ticker→expirations]", { t: form.ticker });
+
+  // Hard reset cross-ticker state so nothing bleeds
+  setForm((f) => ({ ...f, expiry: "", strike: "" }));
+  setExpirations([]);
+  setAllStrikes([]);
+  setStrikes([]);
+
+  // Kick off fresh expirations for this ticker
+  loadExpirations(form.ticker).catch((e) => {
+    console.warn("[WATCH ticker→expirations] error", e);
+    try { addDebug?.("Expiries effect error", e); } catch {}
+  });
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [form.ticker]);
 // Strikes when ticker/type/expiry changes (per-expiry list only)
 useEffect(() => {
   if (!form.ticker.trim() || !form.type || !form.expiry) return;
