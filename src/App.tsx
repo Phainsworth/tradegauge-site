@@ -1788,7 +1788,42 @@ async function fetchOptionChain(symbol: string, opts?: { force?: boolean }) {
 }
   const getExpirationRaw = (d: any) =>
     d?.expirationDate ?? d?.expiration ?? d?.expiry ?? d?.expDate ?? null;
+// Tiny probe: find the nearest (earliest) expiry quickly so strikes can load in parallel
+async function fastFindNearestExpiry(tkr: string, type: "CALL" | "PUT"): Promise<string | "" > {
+  const TKR = String(tkr || "").trim().toUpperCase();
+  if (!TKR || !type) return "";
 
+  // Build smallest possible query: 1 contract, active, sorted by soonest expiry
+  const base =
+    `/v3/reference/options/contracts` +
+    `?underlying_ticker=${encodeURIComponent(TKR)}` +
+    `&contract_type=${encodeURIComponent(type.toLowerCase())}` +
+    `&sort=expiration_date&order=asc&limit=1`;
+
+  async function fetchOne(path: string) {
+    const url = `/.netlify/functions/polygon-proxy?path=${encodeURIComponent(path)}`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const j = await r.json();
+    const arr =
+      (Array.isArray(j?.results) && j.results) ||
+      (Array.isArray(j?.data)    && j.data)    ||
+      (Array.isArray(j?.body?.results) && j.body.results) ||
+      (Array.isArray(j?.body?.data)    && j.body.data)    ||
+      [];
+    return Array.isArray(arr) && arr.length ? arr[0] : null;
+  }
+
+  // Try active only first (fast)
+  let first = await fetchOne(`${base}&active=true`);
+
+  // Fallback: if empty, drop active filter (catalog)
+  if (!first) first = await fetchOne(base);
+  if (!first) return "";
+
+  const ymd = String(first?.expiration_date || first?.expirationDate || "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : "";
+}
 // Pick the nearest expiry date (closest >= today; else overall closest)
 function pickNearestExpiry(dates: string[]): string {
   if (!Array.isArray(dates) || dates.length === 0) return "";
@@ -2760,37 +2795,34 @@ useEffect(() => {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [form.ticker]);
-// When the user picks CALL/PUT, load expirations, auto-pick nearest,
-// then immediately load strikes for that picked expiry.
+// When the user picks CALL/PUT: start expirations AND a fast strike load in parallel.
 useEffect(() => {
   if (!form.ticker?.trim() || !form.type) return;
 
-  console.log("[PRIME] type set — fetching expirations and strikes", {
+  console.log("[PRIME] type set — parallel load exp + strikes", {
     t: form.ticker, type: form.type
   });
 
+  let cancelled = false;
+
   (async () => {
-    // 1) fetch expirations (loadExpirations now returns the list)
-    const exps = await loadExpirations(form.ticker);
-    if (!Array.isArray(exps) || exps.length === 0) return;
+    // Start expirations (returns list)
+    const expsPromise = loadExpirations(form.ticker);
 
-    // 2) pick nearest date; set it if changed
-    const auto = pickNearestExpiry(exps); // you already have this helper
-    const effExpiry = auto || form.expiry || "";
-    if (effExpiry && effExpiry !== form.expiry) {
-      setForm((f) => ({ ...f, expiry: effExpiry }));
+    // In parallel: probe the soonest expiry and load strikes right away
+    const ymd = await fastFindNearestExpiry(form.ticker, form.type as "CALL" | "PUT");
+    if (!cancelled && ymd) {
+      if (ymd !== form.expiry) {
+        setForm((f) => ({ ...f, expiry: ymd })); // keep UI in sync
+      }
+      await loadStrikesForExpiry(form.ticker, form.type as "CALL" | "PUT", ymd);
     }
 
-    // 3) immediately load strikes for that expiry
-    if (effExpiry) {
-      await loadStrikesForExpiry(
-        form.ticker,
-        form.type as "CALL" | "PUT",
-        effExpiry
-      );
-    }
-  })().catch((e) => addDebug("Prime type→exp+strikes error", e));
+    // Await the full expirations list (UI dropdown)
+    await expsPromise;
+  })().catch((e) => addDebug("Prime type→parallel exp+strikes error", e));
 
+  return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [form.ticker, form.type]);
 
