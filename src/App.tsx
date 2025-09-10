@@ -4918,7 +4918,7 @@ function Starfield() {
             rgba(255,210,80,0.22), rgba(255,210,80,0.12) 15%,
             rgba(255,170,0,0.07) 28%, rgba(255,140,0,0.04) 40%,
             rgba(255,120,0,0.02) 55%, transparent 70%);
-          filter: blur(18px);
+          filter: blur(18px) hue-rotate(265deg) saturate(1.05) brightness(0.98);
         }
         .tg-sun-rays {
           position:absolute; inset:-30%; pointer-events:none; mix-blend-mode: screen;
