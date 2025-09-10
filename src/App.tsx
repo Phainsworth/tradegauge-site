@@ -2448,15 +2448,20 @@ if (!isNum(markNum)) {
 const pick = (pg: number | undefined | null, tj: any) =>
   Number.isFinite(pg as any) ? (pg as number) : (Number.isFinite(+tj) ? +tj : NaN);
 
+// Tradier usually nests greeks under j.greeks.{delta,gamma,theta,vega,iv}
+const tjG = (j?.greeks ?? {}) as any;
+
 const numericGreeks: NumericGreeks = {
-  delta: pick(polyGreeks?.delta, j?.delta),
-  gamma: pick(polyGreeks?.gamma, j?.gamma),
-  theta: pick(polyGreeks?.theta, j?.theta),
-  vega:  pick(polyGreeks?.vega,  j?.vega),
-  iv:    pick(polyGreeks?.iv,    j?.iv ?? j?.implied_volatility),
-  openInterest: Number.isFinite(+j?.openInterest) ? +j.openInterest
-                : Number.isFinite(+j?.open_interest) ? +j.open_interest
-                : (Number.isFinite(polyGreeks?.openInterest as any) ? (polyGreeks!.openInterest as number) : NaN),
+  delta: pick(polyGreeks?.delta, tjG?.delta ?? j?.delta),
+  gamma: pick(polyGreeks?.gamma, tjG?.gamma ?? j?.gamma),
+  theta: pick(polyGreeks?.theta, tjG?.theta ?? j?.theta),
+  vega:  pick(polyGreeks?.vega,  tjG?.vega  ?? j?.vega),
+  iv:    pick(polyGreeks?.iv,    j?.iv      ?? tjG?.iv),
+  openInterest:
+    Number.isFinite(+j?.openInterest) ? +j.openInterest
+    : Number.isFinite(+j?.open_interest) ? +j.open_interest
+    : Number.isFinite((polyGreeks?.openInterest as any)) ? (polyGreeks!.openInterest as number)
+    : NaN,
 };
 
 const quoteNum = {
