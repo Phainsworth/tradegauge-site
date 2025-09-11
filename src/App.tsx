@@ -3949,15 +3949,15 @@ function renderTLDR() {
   </div>
 </div>
 
-{/* What I’d do */}
-<div className="rounded-2xl ring-1 ring-yellow-400/70 shadow-[0_0_22px_-10px_rgba(234,179,8,0.55)] overflow-hidden h-full">
-  <div className="p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm h-full flex flex-col">
-    <div className="text-sm font-semibold text-neutral-200 mb-2">What I’d do (middle-risk, no prices)</div>
-    <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-line flex-1">
-      {capFirst(plan.plan)}
-    </p>
+    {/* What I’d do */}
+    <div className="rounded-2xl ring-1 ring-yellow-400/70 shadow-[0_0_22px_-10px_rgba(234,179,8,0.55)]">
+      <div className="form-card rounded-2xl p-5 md:p-6 bg-neutral-950/90 backdrop-blur-sm">
+        <div className="text-sm font-semibold text-neutral-200 mb-2">What I’d do (middle-risk, no prices)</div>
+        <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-line">{capFirst(plan.plan)}</p>
+      </div>
+    </div>
   </div>
-</div>
+)}
 
 {/* Save & Share */}
 <div className="flex flex-wrap gap-2 pt-1">
