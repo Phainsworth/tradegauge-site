@@ -5026,7 +5026,7 @@ background: linear-gradient(90deg,
       <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 15 }}>
 {/* elon — left (flush) */}
 <img
-  src="/elon.png"
+  src="/elonmuskhighquality.png"
   alt=""
   aria-hidden="true"
 className="
