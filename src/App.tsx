@@ -5045,7 +5045,7 @@ className="
   alt=""
   aria-hidden="true"
   className="
-    absolute right-[-0vw] top-1/2 -translate-y-1/2
+    absolute right-[-10vw] top-1/2 -translate-y-1/2
     h-[100vh] w-auto
     opacity-15
     mix-blend-soft-light
